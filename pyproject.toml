@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reuse-layer"
+dynamic = ["version"]
+description = "MCP server that tells coding agents which open-source GitHub project to reuse before they build: top 3 security-gated, evidence-backed picks, or a clear 'build it yourself'."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Qunivex Labs" }]
+keywords = ["mcp", "model-context-protocol", "coding-agents", "github", "open-source", "supply-chain-security"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: Software Development :: Build Tools",
+  "Typing :: Typed",
+]
+# Keep this list short: every dependency is supply-chain surface for a tool
+# whose whole job is supply-chain hygiene.
+dependencies = [
+  "httpx>=0.28,<1",     # async HTTP to the GitHub REST API
+  "mcp>=2.3,<3",        # official MCP Python SDK
+  "pydantic>=2.11,<3",  # tool schemas
+]
+
+[project.optional-dependencies]
+# Optional small-model relevance judge (used only when an Anthropic key is in the config file).
+llm = ["anthropic>=1,<2"]
+# Optional: read keys from the OS keychain instead of the config file.
+keyring = ["keyring>=25,<26"]
+dev = ["pytest>=8", "ruff>=0.15", "mypy>=1.18"]
+
+[project.urls]
+Homepage = "https://github.com/Qunivex/Open-Intelligence"
+Issues = "https://github.com/Qunivex/Open-Intelligence/issues"
+
+[project.scripts]
+reuse-layer = "reuse_layer.adapters.cli:main"
+
+[tool.hatch.version]
+path = "src/reuse_layer/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reuse_layer"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/reuse_layer", "tests", "README.md", "LICENSE", "SECURITY.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m \"not live\""
+markers = ["live: calls the real GitHub API (deselected by default; run with -m live)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PT"]
+ignore = [
+  "S101",   # assert is fine in tests and for internal invariants
+  "RUF001", # intentional unicode punctuation in human text
+  "E501",   # long string literals are allowed
+  "SIM905", # word lists written as one string read better
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S311", "PT011", "PT018"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+packages = ["reuse_layer"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["keyring.*", "anthropic.*"]
+ignore_missing_imports = true

@@ -1,0 +1,38 @@
+# Source registry (v1: GitHub only).
+#
+# A tier is a prior, not a pass: every candidate still goes through every gate.
+# GitHub is an open host (tier 3 in the design): anyone can publish there. In v1
+# it is also the discovery source, by explicit product choice, so trust inside
+# GitHub comes from WHO OWNS the repository:
+#
+#   tier 1  owner is a foundation, government or vetted public-goods body (lists below)
+#   tier 2  owner is a GitHub organization with a verified domain
+#   tier 3  everything else (personal accounts, unverified organizations)
+#
+# Reviewed quarterly. Add your own curated owners in the user config: [tiers] curated_owners.
+
+[[source]]
+id = "github"
+name = "GitHub"
+operator = "GitHub, Inc."
+kinds = ["project"]
+tier = 3
+access = "api"
+budget_ms = 2000
+enabled = true
+
+[curated_owners]
+# Foundation-governed projects (formal governance and maturity levels).
+foundations = [
+  "apache", "eclipse", "eclipse-ee4j", "linuxfoundation", "cncf", "kubernetes", "kubernetes-sigs", "ossf",
+  "openjs-foundation", "nodejs", "python", "psf", "pytorch", "lfai", "onnx", "numfocus", "numpy", "scipy",
+  "pandas-dev", "matplotlib", "jupyter", "jupyterlab", "scikit-learn", "pallets", "rust-lang", "golang",
+  "mozilla", "grpc", "envoyproxy", "prometheus", "istio", "helm", "containerd", "opencontainers",
+  "open-telemetry", "argoproj", "etcd-io", "cilium", "kubeflow", "openssl", "curl", "sigstore", "in-toto",
+]
+# Government code catalogs and agencies.
+government = [
+  "GSA", "18F", "usds", "cisagov", "nasa", "cds-snc", "alphagov", "italia", "etalab", "betagouv",
+]
+# Digital Public Goods (UN-endorsed registry) maintainers.
+public_goods = ["dhis2", "openmrs", "mosip", "digitalpublicgoods"]

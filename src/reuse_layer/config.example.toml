@@ -1,0 +1,73 @@
+# Reuse Layer configuration
+#
+# Create your own copy with:   reuse-layer config init
+# Find where it lives with:    reuse-layer config path
+# Check it works with:         reuse-layer doctor
+#
+# Keep this file OUTSIDE your projects. Coding agents can read files in the
+# project they work on, so the layer refuses inline keys from a config file
+# that sits inside a git repository.
+#
+# Only people add keys. Agents never see them: no tool takes or returns a key.
+
+[keys]
+# GitHub (required for useful rate limits: 5,000 requests/hour instead of 60).
+# Create a fine-grained personal access token at
+#   https://github.com/settings/personal-access-tokens/new
+# with "Repository access: Public repositories (read-only)" and NO permissions.
+# The layer only reads public data and warns if a token can write.
+#
+# Pick ONE of these forms:
+github = ""                                   # paste the token here, or
+# github = { env = "REUSE_LAYER_GITHUB_TOKEN" }  # read it from an environment variable, or
+# github = { keyring = "reuse-layer" }           # read it from the OS keychain (pip install "reuse-layer[keyring]";
+#                                                #   store it with: reuse-layer keys set github)
+
+# Optional: Anthropic key for the small-model relevance judge (pip install "reuse-layer[llm]").
+# Without it, relevance is scored deterministically from the project's capability card.
+anthropic = ""
+
+# Planned for later versions (ignored by v1, safe to fill in now):
+# huggingface = ""
+# kaggle = ""
+
+[github]
+api_url = "https://api.github.com"
+budget_ms = 2000          # time budget for each GitHub call; slow calls are skipped, not waited on
+deadline_ms = 9000        # overall budget for one find_reusable call
+max_candidates = 40       # pool cap before gates
+deep_enrich = 8           # candidates that get the full evidence pass (README, releases, advisories, CI)
+max_concurrency = 8
+
+[ranking]
+# score = gate * (relevance*a + trust*b + preference*c + verified*d + tier*e) + explore
+relevance = 0.35
+trust = 0.25
+preference = 0.20
+verified = 0.10
+tier = 0.10
+explore = true                 # at most one of three slots may go to a newer project (Thompson sampling)
+newer_than_days = 180          # projects younger than this are "newer" (probation tier)
+build_yourself_below = 0.40    # if the best relevance is below this, the verdict is build_yourself
+
+[gates]
+# permissive | weak_copyleft | any_osi | or a list of SPDX ids, e.g. ["MIT", "Apache-2.0"]
+license_policy = "permissive"
+min_age_days = 30              # younger projects fail unless the caller allows new projects
+max_days_since_push = 730      # projects with no push in this many days count as unmaintained
+allow_forks = false
+require_signed_releases = false
+
+[relevance]
+judge = "auto"                 # auto (LLM judge when an Anthropic key is set) | lexical | llm
+model = "claude-haiku-5-5"     # small, fast model, as the design calls for
+timeout_s = 8
+
+[storage]
+# SQLite file for the HTTP cache and the outcome ledger. Empty = next to this config file.
+path = ""
+retain_task_text = false       # store only a hash of each task, not its text
+
+# Extra owners (GitHub logins) you treat as curated, tier 1 (foundations, governments, your company).
+[tiers]
+curated_owners = []

@@ -1,0 +1,367 @@
+"""A fake GitHub REST API (httpx.MockTransport) and engine factory for offline tests."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from typing import Any, TypeVar
+from urllib.parse import unquote
+
+import httpx
+import pytest
+
+from reuse_layer.config import Secret, Settings
+from reuse_layer.core.engine import Engine
+from reuse_layer.core.store import Store
+from reuse_layer.sources.github import GitHubClient, GitHubSource
+
+NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+TOKEN = "github_pat_TESTTOKEN_abcdefghijklmnopqrstuvwxyz0123"
+T = TypeVar("T")
+
+
+def run(coro: Coroutine[Any, Any, T]) -> T:
+    return asyncio.run(coro)
+
+
+def iso(days_ago: float) -> str:
+    return (NOW - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass
+class FakeRepo:
+    full_name: str
+    description: str
+    topics: list[str] = field(default_factory=list)
+    language: str | None = "Python"
+    license: str | None = "MIT"
+    created_days: float = 900
+    pushed_days: float = 3
+    archived: bool = False
+    fork: bool = False
+    private: bool = False
+    owner_type: str = "Organization"
+    org_verified: bool = False
+    stars: int = 500
+    forks: int = 50
+    readme: str = ""
+    releases: int = 6  # stable releases in the last year (one every ~45 days)
+    contributors: int = 20
+    capped: bool = False
+    health: int = 80
+    ci: str = "success"
+    signature: str = "valid"
+    annotated: bool = True
+    advisories: list[dict[str, Any]] = field(default_factory=list)  # global advisory DB rows
+
+    def json(self) -> dict[str, Any]:
+        owner = self.full_name.split("/")[0]
+        return {
+            "full_name": self.full_name,
+            "private": self.private,
+            "visibility": "private" if self.private else "public",
+            "description": self.description,
+            "topics": self.topics,
+            "language": self.language,
+            "license": {"spdx_id": self.license} if self.license else None,
+            "archived": self.archived,
+            "disabled": False,
+            "fork": self.fork,
+            "is_template": False,
+            "created_at": iso(self.created_days),
+            "pushed_at": iso(self.pushed_days),
+            "default_branch": "main",
+            "owner": {"login": owner, "type": self.owner_type},
+            "stargazers_count": self.stars,
+            "forks_count": self.forks,
+            "open_issues_count": 3,
+            "homepage": f"https://{owner.lower()}.example.org",
+        }
+
+
+def sha_for(name: str, ref: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"{name}@{ref}".encode()).hexdigest()[:40]
+
+
+class FakeGitHub:
+    def __init__(self) -> None:
+        self.repos: dict[str, FakeRepo] = {}
+        self.requests: list[httpx.Request] = []
+        self.fail_paths: set[str] = set()  # path substrings that return HTTP 500
+
+    def add(self, *repos: FakeRepo) -> None:
+        for r in repos:
+            self.repos[r.full_name.lower()] = r
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    # ------------------------------------------------------------------ routing
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = unquote(request.url.path)
+        if any(f in path for f in self.fail_paths):
+            return httpx.Response(500, json={"message": "boom"})
+        headers = {
+            "x-ratelimit-resource": "search" if path.startswith("/search") else "core",
+            "x-ratelimit-remaining": "4000",
+            "x-ratelimit-reset": "9999999999",
+        }
+        if path == "/search/repositories":
+            return httpx.Response(
+                200, json={"items": self._search(request.url.params.get("q", ""))}, headers=headers
+            )
+        if path == "/advisories":
+            affects = request.url.params.get("affects", "").lower()
+            want_malware = request.url.params.get("type") == "malware"
+            rows = [
+                a
+                for r in self.repos.values()
+                for a in r.advisories
+                if r.full_name.split("/")[1].lower() == affects
+                and (a.get("type") == "malware") == want_malware
+            ]
+            return httpx.Response(200, json=rows, headers=headers)
+        if path.startswith("/orgs/"):
+            org = path.split("/")[2].lower()
+            verified = any(
+                r.full_name.lower().startswith(org + "/") and r.org_verified for r in self.repos.values()
+            )
+            return httpx.Response(200, json={"login": org, "is_verified": verified}, headers=headers)
+        m = re.match(r"^/repos/([^/]+)/([^/]+)(/.*)?$", path)
+        if not m:
+            return httpx.Response(404, json={"message": "Not Found"})
+        repo = self.repos.get(f"{m.group(1)}/{m.group(2)}".lower())
+        if repo is None or repo.private:
+            return httpx.Response(404, json={"message": "Not Found"})
+        return self._repo_route(repo, m.group(3) or "", request, headers)
+
+    def _search(self, q: str) -> list[dict[str, Any]]:
+        words = [w.strip('"').lower() for w in q.split() if ":" not in w and w not in ("AND", "OR", "NOT")]
+        out = []
+        for r in self.repos.values():
+            blob = f"{r.full_name} {r.description} {' '.join(r.topics)}".lower().replace("-", " ")
+            if any(w and w in blob for w in words):
+                out.append(r.json())
+        return out
+
+    def _repo_route(
+        self, r: FakeRepo, rest: str, request: httpx.Request, headers: dict[str, str]
+    ) -> httpx.Response:
+        name = r.full_name
+        if rest == "":
+            return httpx.Response(200, json=r.json(), headers=headers)
+        if rest == "/readme":
+            return httpx.Response(200, text=r.readme or f"# {name}\n\n{r.description}\n", headers=headers)
+        if rest == "/releases":
+            rel = [
+                {
+                    "tag_name": f"v1.{i}.0",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": iso(i * 45 + 5),
+                }
+                for i in range(r.releases)
+            ]
+            rel = list(reversed(sorted(rel, key=lambda x: x["published_at"])))
+            return httpx.Response(200, json=rel, headers=headers)
+        if rest == "/tags":
+            return httpx.Response(200, json=[], headers=headers)
+        if rest == "/contributors":
+            rows = [
+                {"login": f"dev{i}", "type": "User", "contributions": 100 - i} for i in range(r.contributors)
+            ]
+            h = dict(headers)
+            if r.capped:
+                h["link"] = '<https://api.github.com/x?page=2>; rel="next"'
+            return httpx.Response(200, json=rows, headers=h)
+        if rest == "/community/profile":
+            return httpx.Response(200, json={"health_percentage": r.health}, headers=headers)
+        if rest == "/security-advisories":
+            return httpx.Response(200, json=[], headers=headers)
+        m = re.match(r"^/git/ref/tags/(.+)$", rest)
+        if m:
+            tag = m.group(1)
+            obj_type = "tag" if r.annotated else "commit"
+            sha = sha_for(name, "tagobj:" + tag) if r.annotated else sha_for(name, tag)
+            return httpx.Response(200, json={"object": {"type": obj_type, "sha": sha}}, headers=headers)
+        m = re.match(r"^/git/tags/(.+)$", rest)
+        if m:
+            tag = next(
+                f"v1.{i}.0"
+                for i in range(max(1, r.releases))
+                if sha_for(name, f"tagobj:v1.{i}.0") == m.group(1)
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "object": {"type": "commit", "sha": sha_for(name, tag)},
+                    "verification": {"verified": r.signature == "valid", "reason": r.signature},
+                },
+                headers=headers,
+            )
+        m = re.match(r"^/git/commits/(.+)$", rest)
+        if m:
+            return httpx.Response(
+                200,
+                json={"verification": {"verified": r.signature == "valid", "reason": r.signature}},
+                headers=headers,
+            )
+        m = re.match(r"^/branches/(.+)$", rest)
+        if m:
+            return httpx.Response(
+                200,
+                json={
+                    "commit": {
+                        "sha": sha_for(name, "main"),
+                        "commit": {"verification": {"verified": False, "reason": "unsigned"}},
+                    }
+                },
+                headers=headers,
+            )
+        m = re.match(r"^/commits/([0-9a-f]{40})/check-runs$", rest)
+        if m:
+            runs = [] if r.ci == "none" else [{"status": "completed", "conclusion": r.ci}]
+            return httpx.Response(200, json={"total_count": len(runs), "check_runs": runs}, headers=headers)
+        return httpx.Response(404, json={"message": "Not Found"})
+
+
+def pricing_world() -> FakeGitHub:
+    """The LLM-cost-estimation scenario from the discovery skill, plus traps for every gate."""
+    gh = FakeGitHub()
+    gh.add(
+        FakeRepo(
+            "AgentOps-AI/tokencost",
+            "Easy token price estimates for 400+ LLMs. TokenOps",
+            topics=["llm", "cost-estimation", "tokens", "openai", "anthropic"],
+            org_verified=True,
+            forks=120,
+            contributors=25,
+            created_days=900,
+            readme="# tokencost\n\nClient-side token counting and price estimation for LLM apps.\n\n## Features\n"
+            "- Count tokens for prompts and completions\n- Calculate the cost of LLM API calls\n"
+            "- Up-to-date per-token prices for 400+ models across providers\n",
+        ),
+        FakeRepo(
+            "BerriAI/litellm",
+            "Python SDK, Proxy Server (LLM Gateway) to call 100+ LLM APIs in OpenAI format",
+            topics=["llm", "openai", "gateway", "anthropic"],
+            org_verified=True,
+            contributors=100,
+            capped=True,
+            forks=4000,
+            stars=30000,
+            created_days=1100,
+            readme="# LiteLLM\n\nCall all LLM APIs using the OpenAI format.\n\n## Features\n"
+            "- Cost tracking and spend management across providers\n"
+            "- Model prices and context window JSON for every model\n- Load balancing and fallbacks\n",
+        ),
+        FakeRepo(
+            "openai/tiktoken",
+            "tiktoken is a fast BPE tokeniser for use with OpenAI's models.",
+            org_verified=True,
+            contributors=30,
+            forks=900,
+            created_days=1300,
+            releases=3,
+            readme="# tiktoken\n\nA fast BPE tokeniser.\n\n## Features\n- Count tokens for a prompt\n- Encode and decode text\n",
+        ),
+        FakeRepo(
+            "quantlab/optionpricer",
+            "Option pricing models: Black-Scholes, binomial trees and Monte Carlo cost of carry",
+            topics=["option-pricing", "black-scholes", "finance"],
+            owner_type="User",
+            contributors=4,
+            readme="# optionpricer\n\nOption pricing model library.\n\n- Black-Scholes pricing model\n",
+        ),
+        FakeRepo(
+            "evil-org/tokencosts",
+            "Token price estimates for LLMs (fast!)",
+            topics=["llm", "cost-estimation"],
+            created_days=40,
+            contributors=1,
+            forks=1,
+            stars=3000,
+            owner_type="User",
+            releases=1,
+        ),
+        FakeRepo(
+            "gplco/llm-price-tracker",
+            "Track LLM token prices and cost estimation",
+            topics=["llm", "pricing"],
+            license="GPL-3.0",
+        ),
+        FakeRepo(
+            "oldco/llm-cost-calc", "LLM cost calculator for token pricing", topics=["llm"], archived=True
+        ),
+        FakeRepo(
+            "vulnco/llm-cost-meter",
+            "Meter LLM token cost estimation per request",
+            topics=["llm", "cost-estimation"],
+            advisories=[
+                {
+                    "ghsa_id": "GHSA-aaaa-bbbb-cccc",
+                    "type": "reviewed",
+                    "severity": "critical",
+                    "summary": "Remote code execution in price loader",
+                    "source_code_location": "https://github.com/vulnco/llm-cost-meter",
+                    "vulnerabilities": [
+                        {"package": {"name": "llm-cost-meter"}, "first_patched_version": None}
+                    ],
+                }
+            ],
+        ),
+        FakeRepo(
+            "freshco/llm-cost-lens",
+            "LLM token cost estimation and price comparison across providers",
+            topics=["llm", "cost-estimation", "pricing"],
+            created_days=100,
+            contributors=6,
+            forks=10,
+            stars=200,
+            readme="# llm-cost-lens\n\n## Features\n- Per-token prices for LLM models\n- Token counting\n"
+            "- Calculate cost of LLM API calls\n",
+        ),
+        FakeRepo("secret-co/private-llm-cost", "LLM cost estimation", private=True),
+    )
+    return gh
+
+
+def make_settings(**overrides: Any) -> Settings:
+    s = Settings(keys={"github": Secret(TOKEN)})
+    return replace(s, **overrides) if overrides else s
+
+
+@pytest.fixture
+def world() -> FakeGitHub:
+    return pricing_world()
+
+
+@pytest.fixture
+def make_engine() -> Callable[..., Engine]:
+    def factory(
+        gh: FakeGitHub, settings: Settings | None = None, *, token: bool = True, seed: int = 7
+    ) -> Engine:
+        settings = settings or make_settings()
+        store = Store(":memory:")
+        client = GitHubClient(
+            token=Secret(TOKEN) if token else None,
+            api_url="https://api.github.com",
+            budget_ms=2000,
+            store=store,
+            transport=gh.transport(),
+        )
+        return Engine(settings, store=store, source=GitHubSource(client), now=lambda: NOW, seed=seed)
+
+    return factory
+
+
+def as_json(text: str) -> Any:
+    return json.loads(text)
