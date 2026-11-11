@@ -55,6 +55,9 @@ class FindRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     task: str = Field(min_length=3, max_length=600)
+    # One call decides one component of the caller's project; the name is only echoed back.
+    component: str | None = Field(default=None, min_length=1, max_length=80)
+    # Every capability is a must-have: a pick that does not evidence one cannot get a plain `reuse`.
     capabilities: list[Phrase] = Field(default_factory=list, max_length=8)
     candidates: list[RepoRef] = Field(default_factory=list, max_length=15)
     search_queries: list[Query] = Field(default_factory=list, max_length=6)
@@ -170,6 +173,9 @@ class GateResult:
     gate: str
     passed: bool
     detail: str
+    # False when the check could not be completed. Such a gate is never passed (it fails closed),
+    # but the candidate is "unchecked", which is a different finding from "failed".
+    complete: bool = True
 
 
 @dataclass
@@ -179,7 +185,10 @@ class Scored:
     repo: Repo
     found_by: set[str] = field(default_factory=set)
     deep: DeepFacts | None = None
+    deep_error: str | None = None  # why the evidence pass did not run: time budget, rate limit, error
     card: Card | None = None
+    covered: tuple[str, ...] = ()  # must-have capabilities the card evidences
+    missing: tuple[str, ...] = ()  # must-have capabilities it does not
     gates: list[GateResult] = field(default_factory=list)
     relevance: float = 0.0
     relevance_detail: list[str] = field(default_factory=list)
@@ -204,5 +213,13 @@ class Scored:
     def passed(self) -> bool:
         return all(g.passed for g in self.gates)
 
+    @property
+    def unchecked(self) -> bool:
+        """Rejected only because checks could not complete: no gate found an actual problem."""
+        failed = [g for g in self.gates if not g.passed]
+        return bool(failed) and not any(g.complete for g in failed)
+
     def first_failure(self) -> GateResult | None:
-        return next((g for g in self.gates if not g.passed), None)
+        """The gate to report for a rejection: a real finding first, else the first unchecked gate."""
+        failed = [g for g in self.gates if not g.passed]
+        return next((g for g in failed if g.complete), failed[0] if failed else None)

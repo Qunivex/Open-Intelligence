@@ -12,6 +12,11 @@ Two judges, one interface:
 * ``LLMJudge`` (optional, when an Anthropic key is configured): a small fast
   model reads the cards, as the design specifies. Its score is blended with
   the lexical score; it can never override a gate.
+
+Which must-have capabilities a card *covers* is decided by ``LexicalJudge``
+alone, so the answer is reproducible and no model output can turn a gap into
+coverage. Coverage is evidence found in text the repository owner wrote: it
+shows what a project says it does, not that it does it.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from typing import Any
 from reuse_layer.config import Secret
 from reuse_layer.core.cards import card_payload
 from reuse_layer.core.models import Card
-from reuse_layer.core.text import tokens, unique
+from reuse_layer.core.text import sanitize, tokens, unique
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +106,19 @@ def _alternatives(capability: str) -> list[list[str]]:
     return [a for a in alts if a]
 
 
+def label(capability: str) -> str:
+    """How a capability is named in results: its first phrasing."""
+    return sanitize(capability.split("|", 1)[0], 80)
+
+
+def must_haves(need: Need) -> tuple[str, ...]:
+    """The capabilities that can be assessed (a phrase of only generic words cannot be)."""
+    return tuple(label(c) for c in need.capabilities if _alternatives(c))
+
+
 class LexicalJudge:
+    # A capability is covered only at this phrase score or better. Deliberately strict: below it the
+    # capability is reported as not evidenced, and a pick with one such gap cannot get a plain `reuse`.
     COVERED = 0.6
 
     def judge(self, need: Need, card: Card) -> Judgement:
@@ -115,8 +132,7 @@ class LexicalJudge:
                 continue
             s = max(idx.phrase(a) for a in alts)
             cap_scores.append(s)
-            label = cap.split("|", 1)[0].strip()
-            (covered if s >= self.COVERED else missing).append(label)
+            (covered if s >= self.COVERED else missing).append(label(cap))
         task_terms = unique(tokens(need.task, drop_generic=True))[:12]
         task_score = sum(idx.term(t) for t in task_terms) / len(task_terms) if task_terms else 0.0
         score = 0.65 * (sum(cap_scores) / len(cap_scores)) + 0.35 * task_score if cap_scores else task_score

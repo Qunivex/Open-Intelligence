@@ -145,9 +145,12 @@ def test_failed_vulnerability_check_fails_closed(
 ) -> None:
     world.fail_paths.add("/security-advisories")
     out = run(make_engine(world).find_reusable(PRICING))
-    assert out["picks"] == []
-    assert out["verdict"] == "no_candidates"
-    assert any("fails closed" in r["reason"] for r in out["rejected"])
+    assert out["picks"] == []  # still fails closed: an unchecked project is never a pick
+    # ...but "could not be checked" is not "nothing fits": the verdict says so and nobody is told to build
+    assert out["verdict"] == "inconclusive"
+    assert out["build_yourself"]["recommended"] is False
+    unchecked = [r for r in out["rejected"] if "fails closed" in r["reason"]]
+    assert unchecked and all(r["unchecked"] is True for r in unchecked)
 
 
 def test_language_gate_and_license_override(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:

@@ -208,6 +208,7 @@ def cmd_find(args: argparse.Namespace) -> int:
     )
     req = FindRequest(
         task=args.task,
+        component=args.component,
         capabilities=args.capability or [],
         candidates=args.candidate or [],
         search_queries=args.query or [],
@@ -231,7 +232,28 @@ def cmd_find(args: argparse.Namespace) -> int:
 
 
 def _print_find(r: dict[str, Any]) -> None:
-    print(f"verdict: {r['verdict']}  ({r['build_yourself']['reason']})")
+    rec = r.get("recommendation") or {}
+    reason = rec.get("reason") or r.get("build_yourself", {}).get("reason", "")
+    if r.get("component"):
+        print(f"component: {r['component']}")
+    print(f"verdict: {r['verdict']}  ({reason})")
+    if rec.get("next"):
+        print(f"next: {rec['next']}")
+    cov = r.get("coverage") or {}
+    if cov.get("unknown"):
+        print(
+            f"coverage: unknown for {len(cov['unknown'])} must-have capabilities (nothing could be assessed)"
+        )
+    elif cov.get("must_have"):
+        print(f"coverage: {len(cov.get('covered', []))}/{cov['must_have']} must-have capabilities evidenced")
+        for m in cov.get("missing", []):
+            also = (cov.get("covered_by_other_picks") or {}).get(m)
+            print(f"   - missing: {m}" + (f" (evidenced by {', '.join(also)})" if also else ""))
+    evidence = r.get("evidence") or {}
+    if evidence.get("status") not in (None, "complete"):
+        print(f"evidence: {evidence['status']}")
+    for c in r.get("unresolved_checks", []):
+        print(f"   ? {c}")
     for i, p in enumerate(r["picks"], 1):
         flag = "  [explore]" if p.get("explore") else ""
         print(f"\n{i}. {p['id']}  score {p['scores']['total']}{flag}")
@@ -263,13 +285,18 @@ def _print_find(r: dict[str, Any]) -> None:
                 print(f"   ref freshness: pinned {pinned_at}; branch head {branch_at} ({status})")
             else:
                 print("   ref freshness: commit date unavailable")
-        for k in p.get("risks", []):
+        for k in p.get("integration_risks", []):
             print(f"   ! {k}")
+        for k in p.get("unresolved_checks", []):
+            print(f"   ? {k}")
         print(f"   get: {p['get']}")
+    if r.get("also_passed"):
+        print(f"\nalso passed the gates, ranked lower: {', '.join(r['also_passed'])}")
     if r.get("rejected"):
         print("\nrejected:")
         for x in r["rejected"]:
-            print(f"   - {x['repo']}: {x['gate']}: {x['reason']}")
+            kind = "unchecked" if x.get("unchecked") else "failed"
+            print(f"   - {x['repo']}: {x['gate']} {kind}: {x['reason']}")
     if r.get("unresolved"):
         print(f"\nunresolved (not real GitHub repos): {', '.join(r['unresolved'])}")
     for n in r.get("notes", []):
@@ -277,6 +304,8 @@ def _print_find(r: dict[str, Any]) -> None:
     print(
         f"\nconsidered {r['considered']} | relevance: {r['relevance_judge']} | {r['elapsed_ms']} ms | {r['recommendation_id']}"
     )
+    if r.get("limits"):
+        print(r["limits"])
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -341,8 +370,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser("find", help="top 3 GitHub projects for a task")
     f.add_argument("task")
+    f.add_argument("--component", help="name of the component this call decides (echoed in the result)")
     f.add_argument(
-        "--capability", "-c", action="append", help="a needed capability (alternatives with '|'); repeatable"
+        "--capability",
+        "-c",
+        action="append",
+        help="a must-have capability (alternatives with '|'); repeatable",
     )
     f.add_argument("--candidate", action="append", help="owner/repo you think fits; repeatable")
     f.add_argument("--query", "-q", action="append", help="a GitHub search query; repeatable")

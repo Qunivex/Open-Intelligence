@@ -6,9 +6,12 @@ description: Find the right open-source projects on GitHub for what the user wan
 # GitHub open-source discovery
 
 Your job is **discovery**: work out what the user actually needs and find the right candidates.
-The Reuse Layer's job is **ranking and safety**: `find_reusable` verifies every name, runs the security
-gates, scores the survivors and returns the top 3 (or says to build it yourself). Never skip the tool's
-gates, and never recommend a project it did not return.
+The Reuse Layer's job is **vetting and ranking**: `find_reusable` verifies every name, runs the security
+gates, checks which must-have capabilities each survivor shows evidence for, and returns a verdict for one
+component with up to 3 picks. Never skip the tool's gates, and never recommend a project it did not return.
+
+The gates report what a fixed list of checks found. They do not read source code, scan dependencies or run
+anything, so never say a project is safe, secure or fully compatible because it passed them or scored well.
 
 ## Why not keywords
 
@@ -44,6 +47,11 @@ Keep it fast: at most 2 search rounds and about 6 tool calls before `find_reusab
 - Decide whether one project should cover everything or whether the need splits into components. For a
   whole product, pick the 1 to 3 components where reuse saves the most and run the rest of this workflow
   once per component.
+- A **component** is a part of the product that could be reused or built on its own (authentication, a
+  price table, a job queue). Give each a short name and its own must-haves. Each component gets its own
+  `find_reusable` call and its own decision; never merge two components' results into one verdict.
+- Every capability you pass is a **must-have**: a project that shows no evidence for one cannot get a
+  plain `reuse`, however trusted or popular it is. Leave nice-to-haves out of `capabilities`.
 
 ### 3. Generate candidate hypotheses (think past the obvious)
 
@@ -90,7 +98,8 @@ the user's whole sentence; no `stars:` filters (popularity is not fit, and stars
 Call it with:
 
 - `task`: the job-to-be-done sentence from step 1 (not the user's raw text).
-- `capabilities`: from step 2, with `|` alternatives.
+- `component`: the component's short name from step 2, so each result stays tied to its component.
+- `capabilities`: this component's must-haves from step 2, with `|` alternatives.
 - `candidates`: up to 15 `owner/repo` names from steps 3 and 5, best first.
 - `search_queries`: your 2 to 4 best queries, so the tool can also find what you missed.
 - `avoid`: the unintended senses from step 1.
@@ -108,11 +117,51 @@ translated without exposing hidden reasoning. Do not claim to have logged API in
 `REUSE_LAYER_LOG_LEVEL=DEBUG` diagnostics report structured inputs, HTTP status/cache/timing and response
 counts, not full response bodies.
 
-- **reuse**: list the picks in order: name, one-line reason from `why`, notable `risks`, and the exact
-  `get` command with the pinned `commit`. Say that a pick marked `explore` is newer and less proven.
+Lay the trace and the decision out like this, once per component. Every line is a conclusion or an input
+that produced it, taken from what you sent and what the tool returned:
+
+1. **Interpreted job**: the one-sentence job to be done and the kind of artifact sought.
+2. **Must-have requirements**: the capabilities you passed, by their first phrasing, and the `avoid` senses.
+3. **Constraints**: language, license policy, minimum age, exclusions. Read them back from `constraints`,
+   which includes defaults you did not set.
+4. **Searches used**: your `search_github` queries and the tool's `queries`. Say which did not complete
+   (a `search_github` row with `error`, or a "search not completed" line in `unresolved_checks`).
+5. **Candidate shortlist**: every name you passed or the tool found, and what happened to it: a pick;
+   `also_passed` (passed the gates, ranked lower); `rejected`, with the gate and reason, saying "could not
+   be checked" when `unchecked` is true; or dropped because it does not exist (`unresolved`).
+6. **Decision**: the `verdict` and `recommendation`, then for the recommended pick its coverage
+   (`coverage.covered`, `coverage.missing`), gate results (`gates`), `unresolved_checks` (the component's
+   and the pick's own) and `integration_risks`.
+
+Do not add how you weighed the options, alternatives you considered and dropped along the way, or any
+step-by-step reasoning: no chain-of-thought, only the trace above.
+
+What each verdict means and what to say:
+
+- **reuse**: the recommended pick shows evidence for every must-have. List the picks in order: name,
+  one-line reason from `why`, notable `integration_risks`, and the exact `get` command with the pinned
+  `commit`. Say that a pick marked `explore` is newer and less proven.
+- **reuse_partial**: the recommended pick is worth using but leaves must-haves uncovered. Say which it
+  covers and which it does not (`coverage.missing`). If `coverage.covered_by_other_picks` names another
+  pick for a gap, say so; otherwise treat the gap as its own component (run this workflow for it) or as
+  something to build. Never present a partial pick as covering the component.
 - **build_yourself**: say so and why, and mention the closest match.
 - **no_candidates**: summarise the main `rejected` reasons. You may offer to relax a *preference* (license
   policy, language) if the user agrees; never work around a security gate.
+- **inconclusive**: the evidence could not be gathered (rate limit, timeout, error, or candidates left
+  unexamined). Say what could not be checked from `unresolved_checks`, follow `recommendation.next`, and
+  retry once. It is not `no_candidates`: do not tell the user nothing exists, and do not start building
+  because of it. If it stays inconclusive, tell the user what is blocking.
+
+Rules that hold for every verdict:
+
+- Coverage comes before score. A high `scores.total`, a famous owner or many stars never makes up for a
+  capability in `coverage.missing`; report the gap first.
+- Coverage is what the project's README and metadata say it does. Say "shows evidence for", not "does".
+- Never say a project is safe, secure or fully compatible. Say which checks passed, what is still in
+  `unresolved_checks`, and that it needs review and testing in the user's project (see `limits`).
+- When `evidence.status` is `partial`, say so even with a `reuse` verdict: a better candidate may have
+  been missed.
 - Never mention `unresolved` names as options: they do not exist.
 - If a note says GitHub is not connected, ask the user to add a token to the Reuse Layer config file
   (`reuse-layer config path` shows where). Never ask for a token in chat and never put one in a tool call.
@@ -154,6 +203,7 @@ gateways that ship a model-price table (e.g. `BerriAI/litellm`). Primitive: toke
 ```json
 {
   "task": "Estimate and compare the cost of LLM API usage across providers and models from token counts and current per-token prices",
+  "component": "cost estimation core",
   "capabilities": [
     "up-to-date per-token prices for many LLM models | LLM pricing data | model prices",
     "count tokens for prompts and completions | token counting | tokenizer",
@@ -166,5 +216,8 @@ gateways that ship a model-price table (e.g. `BerriAI/litellm`). Primitive: toke
 }
 ```
 
-Then present the picks as in step 7. If the user's product also needs, say, a pricing-comparison UI, run
-the workflow again for that component.
+Then present the result as in step 7. Suppose the verdict is `reuse_partial` because the recommended
+gateway shows no evidence for token counting: say so, point to the tokenizer if
+`coverage.covered_by_other_picks` names it, and otherwise run the workflow again with "token counting" as
+its own component. If the user's product also needs, say, a pricing-comparison UI, that is another
+component with its own call and its own decision.

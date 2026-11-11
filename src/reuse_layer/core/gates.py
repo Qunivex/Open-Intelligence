@@ -1,11 +1,19 @@
 """Hard gates. Any failure removes the project from results; no model output can override one.
 
 Gates fail closed: a check that could not complete (timeout, rate limit,
-error) is a failure, reported as such, never a silent pass.
+error) is a failure, reported as such, never a silent pass. Such a result
+carries ``complete=False`` so that "could not be checked" stays distinguishable
+from "was checked and failed": both keep the project out of the picks, but
+only the second is evidence against it.
 
 Metadata gates run first on every candidate (cheap: status, license, age,
 language). Evidence gates run on the shortlist after enrichment
 (vulnerabilities, malware, pinning and provenance, lookalike names).
+
+A passed gate means that check found no blocking issue. It is not a statement
+that the project is safe or compatible: the gates do not read source code,
+scan dependencies or run anything. ``unresolved_checks`` lists what could not
+be established even for a project that passed.
 """
 
 from __future__ import annotations
@@ -90,28 +98,41 @@ def evidence_gates(s: Scored, p: GatePolicy, lookalike_of: str | None, now: date
     deep = s.deep
     out: list[GateResult] = []
     if deep is None:
-        return [GateResult("evidence", False, "evidence checks did not run (time budget or rate limit)")]
+        why = s.deep_error or "time budget or rate limit"
+        return [
+            GateResult(
+                "evidence", False, f"evidence checks did not run ({why}); fails closed", complete=False
+            )
+        ]
 
-    if not deep.advisories_checked:
-        out.append(GateResult("vulns", False, "vulnerability check could not complete (fails closed)"))
+    live = [a for a in deep.advisories if not a.malware]
+    blocking = [a for a in live if a.patched is False and a.severity in ("high", "critical")]
+    if blocking:  # a finding from any source that answered is a real failure, even if another did not
+        a = blocking[0]
+        out.append(
+            GateResult("vulns", False, f"{a.ghsa_id} ({a.severity}) has no fixed version: {a.summary}")
+        )
+    elif not deep.advisories_checked:
+        out.append(
+            GateResult(
+                "vulns", False, "vulnerability check could not complete (fails closed)", complete=False
+            )
+        )
+    elif live:
+        unfixed = [a for a in live if a.patched is False]
+        unknown = [a for a in live if a.patched is None]
+        parts = [f"{len(live)} published advisories"]
+        if unfixed:
+            parts.append(f"{len(unfixed)} low/medium without a fix")
+            s.risks.append(f"{len(unfixed)} low/medium advisories without a fixed version")
+        if unknown:  # never reported as fixed: the advisory does not say
+            parts.append(f"fix status unknown for {len(unknown)}")
+            s.risks.append(f"Fix status unknown for {len(unknown)} published advisories: review them")
+        if not unfixed and not unknown:
+            parts.append("all with fixes")
+        out.append(GateResult("vulns", True, ", ".join(parts)))
     else:
-        live = [a for a in deep.advisories if not a.malware]
-        blocking = [a for a in live if a.patched is False and a.severity in ("high", "critical")]
-        if blocking:
-            a = blocking[0]
-            out.append(
-                GateResult("vulns", False, f"{a.ghsa_id} ({a.severity}) has no fixed version: {a.summary}")
-            )
-        elif live:
-            unfixed = [a for a in live if a.patched is False]
-            detail = f"{len(live)} published advisories, " + (
-                f"{len(unfixed)} low/medium without a fix" if unfixed else "all with fixes"
-            )
-            out.append(GateResult("vulns", True, detail))
-            if unfixed:
-                s.risks.append(f"{len(unfixed)} low/medium advisories without a fixed version")
-        else:
-            out.append(GateResult("vulns", True, "no published advisories"))
+        out.append(GateResult("vulns", True, "no published advisories"))
 
     malware = [a for a in deep.advisories if a.malware]
     out.append(
@@ -124,7 +145,11 @@ def evidence_gates(s: Scored, p: GatePolicy, lookalike_of: str | None, now: date
 
     pin = deep.pin
     if pin is None:
-        out.append(GateResult("provenance", False, "could not resolve a commit to pin (fails closed)"))
+        out.append(
+            GateResult(
+                "provenance", False, "could not resolve a commit to pin (fails closed)", complete=False
+            )
+        )
     elif pin.signature in _BAD_SIGNATURES:
         out.append(
             GateResult("provenance", False, f"signature on {pin.ref} failed verification ({pin.signature})")
@@ -144,4 +169,32 @@ def evidence_gates(s: Scored, p: GatePolicy, lookalike_of: str | None, now: date
             GateResult("lookalike", True, f"name close to {lookalike_of}; check it is the one you want")
         )
         s.risks.append(f"Name close to {lookalike_of}")
+    return out
+
+
+# Evidence fetches that can fail without failing a gate, and what their absence leaves unknown.
+_UNRESOLVED = {
+    "readme": "README not read: capability coverage is judged from repository metadata only",
+    "releases": "releases not listed: the pin may not be the latest release",
+    "tags": "tags not listed: the pin may not be the latest version",
+    "contributors": "contributor data not read",
+    "community": "community health not read",
+    "org": "organization verification not read",
+    "checks": "upstream CI status not read",
+}
+
+
+def unresolved_checks(s: Scored) -> list[str]:
+    """What stayed unknown about a project that passed its gates. Never a reason to call it checked."""
+    deep = s.deep
+    if deep is None:
+        return []
+    failed = sorted({e.split(":", 1)[0] for e in deep.errors})
+    out = [_UNRESOLVED.get(name, f"{name} check did not complete") for name in failed]
+    if deep.ci == "pending":
+        out.append("upstream CI still running on the pinned commit")
+    elif deep.ci == "unknown" and "checks" not in failed:
+        out.append("upstream CI status unknown")
+    if deep.pin is not None and deep.pin.signature == "unknown":
+        out.append("commit signature could not be read")
     return out

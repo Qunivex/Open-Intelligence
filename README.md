@@ -4,6 +4,11 @@ Reuse Layer tells coding agents **what to reuse before they build**. Ask it for 
 the **top 3 open-source GitHub projects** that pass every security gate, each pinned to an exact tag and
 commit SHA with evidence for the pick, or a clear **"build it yourself"** when nothing fits.
 
+Each call decides **one component** of your project and returns that component's recommendation, its
+coverage of your must-have capabilities, the gate results, the checks that stayed unresolved and the
+integration risks. When it could not gather enough evidence to decide (rate limit, timeout, error) it says
+`inconclusive` instead of pretending nothing exists. See [Verdicts and evidence](#verdicts-and-evidence).
+
 v1 follows the *Reuse Layer: Build Plan* with one deliberate scope cut: **GitHub is the only source.**
 Hugging Face, PyPI, npm, deps.dev, OSV and the rest are later versions; the config file already has room
 for their keys.
@@ -21,9 +26,11 @@ agent ── skill: github-oss-discovery ─────────────
   5. search_github  explore, learn vocabulary from good hits, refine once         │
 └─ find_reusable(task, capabilities, candidates, search_queries, avoid, context) ──┘
         │  resolve names → metadata gates → enrich shortlist → capability cards
-        │  → relevance → evidence gates → score → top 3 (+1 explore slot) → verdict
+        │  → relevance + must-have coverage → evidence gates → score
+        │  → top 3 by coverage, then score (+1 explore slot) → verdict
         ▼
-  picks: pkg:github/owner/repo@v1.2.3  commit 4e71bbe0…  why[…]  gates{…}  risks[…]
+  verdict · recommendation · coverage{covered, missing} · evidence · unresolved_checks[…]
+  picks: pkg:github/owner/repo@v1.2.3  commit 4e71bbe0…  why[…]  gates{…}  integration_risks[…]
 ```
 
 ## Quick start
@@ -82,7 +89,7 @@ relevance judge and storage.
 
 | Tool | Why it exists | Returns |
 | --- | --- | --- |
-| `find_reusable` | **The tool.** Top 3 for a task. | Ranked, gated, pinned picks; `rejected` with reasons; `unresolved` invented names; verdict `reuse` / `build_yourself` / `no_candidates` |
+| `find_reusable` | **The tool.** One component's decision and its top 3. | Verdict `reuse` / `reuse_partial` / `build_yourself` / `no_candidates` / `inconclusive`; `recommendation`; `coverage` of the must-haves; `evidence` and `unresolved_checks`; ranked, gated, pinned picks with `gates` and `integration_risks`; `rejected` with reasons; `unresolved` invented names |
 | `search_github` | Dependency of the discovery skill: the GitHub token lives in the server, so exploration has to go through it. | Compact results per query (name, about, topics, language, license, last push) |
 | `report_outcome` | Dependency of the ranking: the track-record factor (20%) needs integration outcomes. | Acknowledgement and updated retention |
 
@@ -103,7 +110,11 @@ agent:
 4. build a **query portfolio** of differently angled searches (practitioner phrase, `topic:`,
    `in:readme` phrase, data/artifact, language-scoped, `NOT` the wrong sense);
 5. explore with `search_github`, then refine once from the vocabulary of the good hits;
-6. hand everything to `find_reusable`, which verifies, gates and ranks it.
+6. hand everything to `find_reusable`, one call per component, which verifies, gates and ranks it;
+7. show the user a short **discovery trace** and the decision: the interpreted job, the must-have
+   requirements, the constraints applied, the searches used, the candidate shortlist and what happened to
+   each name, then the verdict with its coverage, gate results, unresolved checks and integration risks.
+   The trace is conclusions and the inputs behind them, not the agent's chain-of-thought.
 
 The server never trusts the agent's suggestions: every name is resolved against GitHub, and the agent's
 opinion adds at most a small agreement bonus to relevance.
@@ -129,9 +140,79 @@ whether the branch head is newer and by how many days. The layer still pins to t
 the highest version tag, then the default branch; it does not silently substitute a moving branch for a release.
 Commit freshness is reported as evidence and does not currently change the ranking score.
 
+**Coverage comes before the score.** Every capability passed to `find_reusable` is a must-have. Picks are
+ordered by how many must-haves they leave without evidence (fewest first) and only then by the score above,
+so trust, track record, owner tier and the agreement bonus cannot lift a project with a gap above one
+without it. The explore slot never displaces a pick that covers more.
+
+## Verdicts and evidence
+
+One `find_reusable` call decides one component. The verdict is about the **recommended pick**: the first
+pick, in coverage-then-score order, with relevance of at least `build_yourself_below` (0.40) that shows
+evidence for at least one must-have.
+
+| Verdict | Meaning | Build it yourself? |
+| --- | --- | --- |
+| `reuse` | The recommended pick shows evidence for **every** must-have (or none were given) and no gate check found a blocking issue. | no |
+| `reuse_partial` | A recommended pick exists but leaves at least one must-have without evidence. `coverage.missing` names the gaps; `coverage.covered_by_other_picks` says when another pick shows evidence for one. | only the gaps |
+| `build_yourself` | Decisive evidence is complete and no gate-passing candidate qualifies: the closest one fits weakly or shows evidence for none of the must-haves. | yes |
+| `no_candidates` | Decisive evidence is complete, every candidate found was examined, and none passed the gates (or nothing matched). | yes, or widen the search |
+| `inconclusive` | Something decisive could not be checked, so none of the above is supported. | **no**: retry |
+
+Conservative defaults, documented here and in `core/ranking.py`, and deliberately not configurable:
+
+| Rule | Default | Why |
+| --- | --- | --- |
+| A capability counts as covered | lexical phrase score ≥ 0.6 against the capability card | Below that it is reported as *not evidenced*. That is weaker than "absent", and it is never rounded up. |
+| Who decides coverage | the deterministic lexical judge only | The optional model judge can lower or raise relevance; it cannot turn a gap into coverage. |
+| Must-haves needed for `reuse` | 100% | One gap makes it `reuse_partial`. Leave nice-to-haves out of `capabilities`. |
+| Relevance needed to be recommended | ≥ 0.40 (`ranking.build_yourself_below`) | Unchanged from before. |
+| Evidence needed for a negative verdict | complete | `build_yourself` and `no_candidates` are claims that nothing suitable exists; they are not made on missing evidence. |
+| Evidence needed for a positive verdict | the pick's own gate checks all completed | A pick can be recommended on partial evidence; `evidence.status` is then `partial` and the reason says a better candidate may have been missed. |
+
+What counts as a **decisive gap** (any one rules out a negative verdict and is listed in
+`unresolved_checks`):
+
+- a search that was rate limited or failed (an empty result is evidence; a failed search is not);
+- a named candidate that could not be verified (different from `unresolved`, which means GitHub said the
+  repository does not exist);
+- a shortlisted candidate whose evidence pass did not run: over the time budget (`github.deadline_ms`,
+  9 s by default), rate limited, or errored;
+- a gate check that could not complete (vulnerability sources unreachable, no commit could be pinned);
+- a README that could not be read for a gate-passing candidate, since its coverage is then unknown.
+
+Candidates that matched but were never deep-checked (`github.deep_enrich` caps the evidence pass at 8)
+are counted in `evidence.not_examined`. They rule out `no_candidates` only: call again with the rejected
+repositories in `context.exclude` to examine the rest.
+
+`evidence.status` is `complete`, `partial`, or `unavailable` (nothing could be fetched at all).
+`unresolved_checks` also lists checks the inputs left open, such as language fit when no project language
+was given; those do not make the evidence partial.
+
+Each result carries, for its component:
+
+| Section | Where | Contents |
+| --- | --- | --- |
+| Recommendation | `verdict`, `recommendation` | the recommended `repo` (when there is one), the `reason`, and the `next` step |
+| Coverage summary | `coverage` | `must_have` count, and for the recommended pick `covered` and `missing`; `unknown` when the verdict is `inconclusive` |
+| Gate results | `picks[].gates`, `rejected[]` | each gate's finding for every pick; for rejections the gate and reason, with `unchecked: true` when the check could not complete |
+| Unresolved checks | `unresolved_checks`, `picks[].unresolved_checks` | what could not be established, for the component and for each pick |
+| Integration risks | `picks[].integration_risks` | capability gaps first, then licence obligations, maintenance, release and CI risks |
+
+`also_passed` lists projects that passed every gate but ranked below the picks, and `constraints` echoes
+the constraints applied, including defaults the caller did not set.
+
+**What a result never says.** No gate, score or verdict claims a project is safe, secure or fully
+compatible. The gates do not read source code, scan dependencies or run anything, and coverage is read
+from text the repository owner wrote. Every result carries a `limits` line saying so, and the skill and
+server instructions tell agents not to make that claim either.
+
 ## Security gates (fail closed)
 
-Any failure removes the project; a check that could not complete counts as a failure.
+Any failure removes the project; a check that could not complete counts as a failure. It is reported as
+`unchecked` rather than as a finding, and a project kept out that way makes the verdict `inconclusive`
+instead of `no_candidates`: failing closed keeps unverified projects out of the picks without turning
+"could not check" into "nothing exists".
 
 | Gate | Fails when |
 | --- | --- |

@@ -94,6 +94,7 @@ class FakeGitHub:
         self.repos: dict[str, FakeRepo] = {}
         self.requests: list[httpx.Request] = []
         self.fail_paths: set[str] = set()  # path substrings that return HTTP 500
+        self.rate_limit_paths: set[str] = set()  # path substrings that return HTTP 429 (secondary limit)
 
     def add(self, *repos: FakeRepo) -> None:
         for r in repos:
@@ -109,6 +110,8 @@ class FakeGitHub:
         path = unquote(request.url.path)
         if any(f in path for f in self.fail_paths):
             return httpx.Response(500, json={"message": "boom"})
+        if any(f in path for f in self.rate_limit_paths):
+            return httpx.Response(429, json={"message": "slow down"}, headers={"retry-after": "30"})
         headers = {
             "x-ratelimit-resource": "search" if path.startswith("/search") else "core",
             "x-ratelimit-remaining": "4000",

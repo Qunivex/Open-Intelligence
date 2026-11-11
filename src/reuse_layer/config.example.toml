@@ -34,9 +34,11 @@ anthropic = ""
 [github]
 api_url = "https://api.github.com"
 budget_ms = 2000          # time budget for each GitHub call; slow calls are skipped, not waited on
-deadline_ms = 9000        # overall budget for one find_reusable call
+deadline_ms = 9000        # overall budget for one find_reusable call; candidates still unchecked at the
+                          #   deadline are reported as unchecked (never as failed, never as picks)
 max_candidates = 40       # pool cap before gates
-deep_enrich = 8           # candidates that get the full evidence pass (README, releases, advisories, CI)
+deep_enrich = 8           # candidates that get the full evidence pass (README, releases, advisories, CI);
+                          #   matches beyond it are counted in evidence.not_examined
 max_concurrency = 8
 
 [ranking]
@@ -48,7 +50,10 @@ verified = 0.10
 tier = 0.10
 explore = true                 # at most one of three slots may go to a newer project (Thompson sampling)
 newer_than_days = 180          # projects younger than this are "newer" (probation tier)
-build_yourself_below = 0.40    # if the best relevance is below this, the verdict is build_yourself
+build_yourself_below = 0.40    # a pick needs at least this relevance to be recommended; with none that
+                               #   qualifies the verdict is build_yourself (inconclusive if evidence is missing)
+# Not configurable, on purpose: picks are ordered by must-have coverage before this score, `reuse` needs
+# evidence for every must-have capability, and build_yourself / no_candidates need complete evidence.
 
 [gates]
 # permissive | weak_copyleft | any_osi | or a list of SPDX ids, e.g. ["MIT", "Apache-2.0"]
