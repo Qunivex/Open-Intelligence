@@ -221,7 +221,7 @@ instead of `no_candidates`: failing closed keeps unverified projects out of the 
 | license | no license, unrecognised (`NOASSERTION`), or outside the caller's policy (default permissive) |
 | age | created less than 30 days ago (unless `allow_new`) |
 | fit | primary language incompatible with the caller's project |
-| vulns | a published high/critical advisory with no fixed version (repository advisories + GitHub Advisory Database), or the check could not complete |
+| vulns | a published high/critical advisory with no fixed version, or one that names no fixed version at all (fix status unknown), from repository advisories + GitHub Advisory Database; or the check could not complete |
 | malware | a malware advisory for this repository |
 | provenance | no commit could be pinned, a signature failed verification, or signatures are required and missing |
 | lookalike | the name imitates a more established project and the repo is young or has few contributors |

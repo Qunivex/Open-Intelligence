@@ -16,6 +16,7 @@ import json
 import random
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -670,26 +671,63 @@ def test_unchecked_is_only_for_candidates_nothing_was_found_against() -> None:
     assert passed.passed and not passed.unchecked and passed.first_failure() is None
 
 
-def test_unknown_fix_status_is_never_reported_as_fixed() -> None:
-    s = Scored(
-        repo=_repo("acme/thing"),
-        deep=DeepFacts(
-            advisories_checked=True, pin=PINNED, advisories=[Advisory("GHSA-9", "high", "x", patched=None)]
-        ),
+def _vulns(*advisories: Advisory, checked: bool = True) -> tuple[GateResult, Scored]:
+    deep = DeepFacts(advisories_checked=checked, pin=PINNED, advisories=list(advisories))
+    s = Scored(repo=_repo("acme/thing"), deep=deep)
+    return next(g for g in evidence_gates(s, POLICY, None, NOW) if g.gate == "vulns"), s
+
+
+def test_high_or_critical_advisory_with_unknown_fix_status_fails_closed() -> None:
+    for severity in ("high", "critical"):
+        gate, _ = _vulns(Advisory("GHSA-9", severity, "rce in loader", patched=None))
+        # a finding, not an unchecked candidate: the advisory was read and it cannot be cleared
+        assert (gate.passed, gate.complete) == (False, True)
+        assert "GHSA-9" in gate.detail and "fix status unknown (fails closed)" in gate.detail
+    # one is enough, even next to advisories that do have a fix
+    gate, _ = _vulns(
+        Advisory("GHSA-1", "critical", "a", patched=True), Advisory("GHSA-2", "high", "b", patched=None)
     )
-    vulns = next(g for g in evidence_gates(s, POLICY, None, NOW) if g.gate == "vulns")
-    assert "all with fixes" not in vulns.detail and "fix status unknown for 1" in vulns.detail
-    assert any("Fix status unknown" in r for r in s.risks)
-    fixed = Scored(
-        repo=_repo("acme/other"),
-        deep=DeepFacts(
-            advisories_checked=True, pin=PINNED, advisories=[Advisory("GHSA-8", "high", "x", patched=True)]
-        ),
+    assert not gate.passed and "GHSA-2" in gate.detail
+    # an advisory known to be unfixed is still the one reported
+    gate, _ = _vulns(
+        Advisory("GHSA-2", "high", "b", patched=None), Advisory("GHSA-3", "critical", "c", patched=False)
     )
-    assert (
-        "all with fixes"
-        in next(g for g in evidence_gates(fixed, POLICY, None, NOW) if g.gate == "vulns").detail
-    )
+    assert not gate.passed and "GHSA-3" in gate.detail and "has no fixed version" in gate.detail
+    # and it stays a finding when another advisory source did not answer
+    gate, _ = _vulns(Advisory("GHSA-9", "high", "x", patched=None), checked=False)
+    assert (gate.passed, gate.complete) == (False, True)
+
+
+def test_lower_severity_unknown_fix_status_is_a_risk_and_never_reported_as_fixed() -> None:
+    for severity in ("low", "medium"):
+        gate, s = _vulns(Advisory("GHSA-7", severity, "x", patched=None))
+        assert gate.passed and "all with fixes" not in gate.detail
+        assert "fix status unknown for 1" in gate.detail
+        assert s.risks == ["Fix status unknown for 1 low/medium advisories: review them"]
+    fixed, s = _vulns(Advisory("GHSA-8", "critical", "x", patched=True))
+    assert fixed.passed and "all with fixes" in fixed.detail and s.risks == []
+
+
+def test_project_with_an_unclearable_critical_advisory_is_rejected_end_to_end(
+    make_engine: Callable[..., Engine],
+) -> None:
+    advisory = {
+        "ghsa_id": "GHSA-dddd-eeee-ffff",
+        "type": "reviewed",
+        "severity": "critical",
+        "summary": "Deserialisation of untrusted price files",
+        "source_code_location": "https://github.com/solo/llm-cost-kit",
+        "vulnerabilities": [],  # the advisory names no affected or fixed versions
+    }
+    gh = world_of(replace(SMALL_BUT_COMPLETE, advisories=[advisory]))
+    out = run(make_engine(gh).find_reusable(request("solo/llm-cost-kit")))
+    assert out["picks"] == []  # it covers every must-have, and still is not offered
+    (rejected,) = out["rejected"]
+    assert rejected["gate"] == "vulns" and "unchecked" not in rejected
+    assert "GHSA-dddd-eeee-ffff (critical)" in rejected["reason"]
+    assert "fix status unknown (fails closed)" in rejected["reason"]
+    # a finding on complete evidence, so this is a real "nothing usable", not an inconclusive result
+    assert out["verdict"] == "no_candidates" and out["evidence"]["status"] == "complete"
 
 
 def test_unresolved_checks_name_what_stayed_unknown() -> None:

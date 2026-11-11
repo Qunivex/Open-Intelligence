@@ -6,6 +6,11 @@ carries ``complete=False`` so that "could not be checked" stays distinguishable
 from "was checked and failed": both keep the project out of the picks, but
 only the second is evidence against it.
 
+Unknown data fails closed too. A high or critical advisory that names no
+fixed version fails the ``vulns`` gate whether the advisory says "no fix" or
+says nothing: the check completed and found an advisory it cannot clear, so
+that is a finding (``complete=True``), not an unchecked candidate.
+
 Metadata gates run first on every candidate (cheap: status, license, age,
 language). Evidence gates run on the shortlist after enrichment
 (vulnerabilities, malware, pinning and provenance, lookalike names).
@@ -106,11 +111,26 @@ def evidence_gates(s: Scored, p: GatePolicy, lookalike_of: str | None, now: date
         ]
 
     live = [a for a in deep.advisories if not a.malware]
-    blocking = [a for a in live if a.patched is False and a.severity in ("high", "critical")]
-    if blocking:  # a finding from any source that answered is a real failure, even if another did not
+    severe = [a for a in live if a.severity in ("high", "critical")]
+    blocking = [a for a in severe if a.patched is False]
+    unconfirmed = [a for a in severe if a.patched is None]
+    # A finding from any source that answered is a real failure, even if another source did not.
+    if blocking:
         a = blocking[0]
         out.append(
             GateResult("vulns", False, f"{a.ghsa_id} ({a.severity}) has no fixed version: {a.summary}")
+        )
+    elif unconfirmed:
+        # The advisory was read and names no fixed version. "No fix on record" is not cleared by
+        # assuming one exists: for high and critical severity it fails closed, as a finding.
+        a = unconfirmed[0]
+        out.append(
+            GateResult(
+                "vulns",
+                False,
+                f"{a.ghsa_id} ({a.severity}) lists no fixed version, fix status unknown "
+                f"(fails closed): {a.summary}",
+            )
         )
     elif not deep.advisories_checked:
         out.append(
@@ -125,9 +145,9 @@ def evidence_gates(s: Scored, p: GatePolicy, lookalike_of: str | None, now: date
         if unfixed:
             parts.append(f"{len(unfixed)} low/medium without a fix")
             s.risks.append(f"{len(unfixed)} low/medium advisories without a fixed version")
-        if unknown:  # never reported as fixed: the advisory does not say
+        if unknown:  # below high severity this is a risk, and it is never reported as fixed
             parts.append(f"fix status unknown for {len(unknown)}")
-            s.risks.append(f"Fix status unknown for {len(unknown)} published advisories: review them")
+            s.risks.append(f"Fix status unknown for {len(unknown)} low/medium advisories: review them")
         if not unfixed and not unknown:
             parts.append("all with fixes")
         out.append(GateResult("vulns", True, ", ".join(parts)))
