@@ -129,7 +129,8 @@ def build_server(
             "Before building a capability or adding a GitHub project as a dependency, ask what to reuse. Returns up "
             "to 3 ranked open-source GitHub projects that passed every security gate (license, known "
             "vulnerabilities, malware flags, age, provenance, lookalike names, maintenance), each pinned to an "
-            "exact tag and commit SHA with evidence, plus a verdict: reuse | build_yourself | no_candidates. "
+            "exact tag and commit SHA with evidence, including freshness compared with the default branch, plus "
+            "a verdict: reuse | build_yourself | no_candidates. "
             "Ranking = 0.35 relevance + 0.25 trust + 0.20 track record + 0.10 upstream CI + 0.10 owner tier; "
             "stars only break ties. Give `capabilities` (each may list alternative phrasings separated by '|'), "
             "`candidates` you believe fit (verified, never trusted; invented names come back as `unresolved`) and "
@@ -191,6 +192,7 @@ def build_server(
                 context=context or CallerContext(),
             )
         )
+        log.info("MCP tool call: find_reusable")
         return await run(lambda e: e.find_reusable(req))
 
     @server.tool(
@@ -216,6 +218,7 @@ def build_server(
         ],
         per_query: Annotated[int, Field(ge=1, le=15, description="Results per query (default 8).")] = 8,
     ) -> str:
+        log.info("MCP tool call: search_github queries=%d", len(queries))
         return await run(lambda e: e.search(list(queries), per_query))
 
     @server.tool(
@@ -252,6 +255,7 @@ def build_server(
                 note=note,
             )
         )
+        log.info("MCP tool call: report_outcome")
         return await run(lambda e: e.report_outcome(rep))
 
     @server.prompt(

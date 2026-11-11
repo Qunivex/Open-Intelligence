@@ -61,7 +61,26 @@ def test_picks_are_pinned_with_evidence(world: FakeGitHub, make_engine: Callable
     assert "signed, verified by GitHub" in top["gates"]["provenance"]
     assert any("capabilities" in w for w in top["why"])
     assert set(top["scores"]) == {"total", "relevance", "trust", "preference", "verified", "tier"}
+    freshness = top["ref_freshness"]
+    assert freshness["pinned_commit_at"] is not None
+    assert freshness["default_branch_commit_at"] is not None
+    assert freshness["default_branch_is_newer"] is True
+    assert freshness["default_branch_ahead_days"] > 0
     assert top["source"] == {"name": "GitHub", "tier": 2}  # verified organization
+
+
+def test_branch_fallback_reports_its_commit_freshness(make_engine: Callable[..., Engine]) -> None:
+    gh = FakeGitHub()
+    gh.add(FakeRepo("acme/branch-only", "LLM API cost estimation", releases=0, pushed_days=2))
+    req = FindRequest(task="LLM API cost estimation", candidates=["acme/branch-only"])
+
+    out = run(make_engine(gh).find_reusable(req))
+
+    pick = out["picks"][0]
+    assert pick["pin"]["ref"] == "main"
+    assert pick["ref_freshness"]["pinned_commit_at"] == pick["ref_freshness"]["default_branch_commit_at"]
+    assert pick["ref_freshness"]["default_branch_is_newer"] is False
+    assert pick["ref_freshness"]["default_branch_ahead_days"] == 0
 
 
 def test_at_most_one_newer_project_takes_the_explore_slot(

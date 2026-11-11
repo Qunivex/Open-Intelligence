@@ -44,6 +44,9 @@ RAW = "application/vnd.github.raw+json"
 _OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})"
 _NAME = r"[A-Za-z0-9._-]{1,100}"
 REPO_RE = re.compile(rf"^{_OWNER}/{_NAME}$")
+_LOG_SECRET = re.compile(
+    r"(?i)\b(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|sk-ant-[A-Za-z0-9_-]{12,})\b"
+)
 
 HOUR = 3600
 DAY = 86400
@@ -159,12 +162,19 @@ class GitHubClient:
         cached = self._store.cache_get(key) if self._store else None
         if cached is not None and time.time() - cached.fetched_at < ttl:
             self.cache_hits += 1
+            log.debug(
+                "GitHub API cache hit: GET %s params=%s (%s)",
+                path,
+                _redact_log_params(params),
+                _response_shape(json.loads(cached.body)),
+            )
             return self._from_cache(cached)
         if self.rate.blocked(resource):
             raise RateLimited(f"GitHub {resource} rate limit reached")
         if resource == "search":
             self._throttle_search()
 
+        log.debug("GitHub API request: GET %s params=%s", path, _redact_log_params(params))
         headers = {"Accept": accept}
         if self._token is not None:
             headers["Authorization"] = f"Bearer {self._token.reveal()}"
@@ -172,14 +182,26 @@ class GitHubClient:
             headers["If-None-Match"] = cached.etag
 
         url = path
+        request_started = time.monotonic()
         for _ in range(3):  # follow at most two same-host redirects (renamed or transferred repos)
             async with self._sem:
                 self.calls += 1
                 try:
                     resp = await self._client.get(url, params=None if "?" in url else params, headers=headers)
                 except httpx.TimeoutException as exc:
+                    log.warning(
+                        "GitHub API timeout: GET %s elapsed_ms=%d",
+                        path,
+                        int((time.monotonic() - request_started) * 1000),
+                    )
                     raise GitHubError("GitHub did not answer within the time budget") from exc
                 except httpx.HTTPError as exc:
+                    log.warning(
+                        "GitHub API transport error: GET %s error=%s elapsed_ms=%d",
+                        path,
+                        type(exc).__name__,
+                        int((time.monotonic() - request_started) * 1000),
+                    )
                     raise GitHubError(f"GitHub request failed: {type(exc).__name__}") from exc
             self._note_rate(resp)
             if resp.status_code in (301, 302, 307, 308):
@@ -196,21 +218,31 @@ class GitHubClient:
         if status == 304 and cached is not None and self._store is not None:
             self._store.cache_touch(key)
             self.cache_hits += 1
+            log.debug(
+                "GitHub API response: GET %s status=304 cache=validated elapsed_ms=%d",
+                path,
+                int((time.monotonic() - request_started) * 1000),
+            )
             return self._from_cache(cached)
         if status in (403, 429) and self._is_rate_limited(resp):
+            log.warning("GitHub API rate limited: GET %s status=%d", path, status)
             raise RateLimited(
                 "GitHub rate limit reached" + ("" if self.authenticated else " (no token configured)")
             )
         if status in (204, 404, 409, 410, 451) or (status == 403 and resource == "core"):
+            log.debug("GitHub API response: GET %s status=%d result=unavailable", path, status)
             # Not found, empty, gone, blocked, or forbidden for this resource: cache briefly as a miss.
             if self._store is not None:
                 self._store.cache_put(key, 404, None, "null", None)
             return None
         if status == 202:
+            log.debug("GitHub API response: GET %s status=202 result=pending", path)
             return None  # GitHub is computing statistics; treat as unavailable
         if status == 401:
+            log.error("GitHub API rejected configured credentials: GET %s status=401", path)
             raise GitHubError("GitHub rejected the token (401); check keys.github in the config file")
         if status >= 400:
+            log.warning("GitHub API error: GET %s status=%d", path, status)
             raise GitHubError(f"GitHub returned HTTP {status}")
 
         body = resp.content[:max_bytes].decode("utf-8", errors="replace")
@@ -229,6 +261,13 @@ class GitHubClient:
         link = resp.headers.get("link")
         if self._store is not None:
             self._store.cache_put(key, status, resp.headers.get("etag"), stored, link)
+        log.debug(
+            "GitHub API response: GET %s status=%d cache=miss elapsed_ms=%d %s",
+            path,
+            status,
+            int((time.monotonic() - request_started) * 1000),
+            _response_shape(data),
+        )
         return GHResponse(status=status, data=data, link=link, from_cache=False)
 
     @staticmethod
@@ -280,6 +319,38 @@ def _drop_private(data: Any) -> Any:
     elif isinstance(data, list):
         return [i for i in data if not (isinstance(i, dict) and _drop_private(i) is None)]
     return data
+
+
+def _redact_log_params(params: Mapping[str, str | int] | None) -> dict[str, str | int]:
+    if not params:
+        return {}
+    return {
+        key: (
+            "********"
+            if any(word in key.lower() for word in ("token", "key", "secret", "password"))
+            else _redact_log_text(value)
+            if isinstance(value, str)
+            else value
+        )
+        for key, value in params.items()
+    }
+
+
+def _redact_log_text(value: str) -> str:
+    return _LOG_SECRET.sub("********", value)
+
+
+def _response_shape(data: Any) -> str:
+    if isinstance(data, dict):
+        collections = [(key, value) for key, value in data.items() if isinstance(value, list)]
+        if collections:
+            return ", ".join(f"{key}={len(value)}" for key, value in collections)
+        return f"object_keys={len(data)}"
+    if isinstance(data, list):
+        return f"items={len(data)}"
+    if isinstance(data, str):
+        return f"text_chars={len(data)}"
+    return f"data_type={type(data).__name__}"
 
 
 # --------------------------------------------------------------------------- parsing
@@ -372,7 +443,14 @@ class GitHubSource:
             "/search/repositories", params={"q": query, "per_page": per_page}, ttl=HOUR
         )
         items = res.data.get("items") if res is not None and isinstance(res.data, dict) else None
-        return [r for r in (repo_from_json(i) for i in (items or [])) if r is not None]
+        repos = [r for r in (repo_from_json(i) for i in (items or [])) if r is not None]
+        log.debug(
+            "GitHub repository search parsed: query=%r returned=%d repos=%s",
+            _redact_log_text(query),
+            len(repos),
+            [repo.full_name for repo in repos],
+        )
+        return repos
 
     async def resolve(self, ref: str) -> Repo | None:
         """Exact repository, or nothing. Follows renames to the canonical name."""
@@ -470,25 +548,48 @@ class GitHubSource:
             versioned = [(version_key(n), n) for n in names if isinstance(n, str) and version_key(n)]
             if versioned:
                 ref, kind = max(versioned)[1], "tag"
+
         try:
-            if ref is not None:
-                return await self._pin_tag(repo, ref, kind)
             branch = await self.client.get(
                 self._path(repo.full_name, "branches", repo.default_branch), ttl=HOUR
             )
         except GitHubError as exc:
-            facts.errors.append(f"pin: {exc}")
+            facts.errors.append(f"branch freshness: {exc}")
+            branch = None
+        branch_commit = branch.data.get("commit") if branch and isinstance(branch.data, dict) else None
+        branch_commit_data = branch_commit.get("commit") if isinstance(branch_commit, dict) else None
+        if isinstance(branch_commit_data, dict):
+            committer = branch_commit_data.get("committer")
+            author = branch_commit_data.get("author")
+            facts.default_branch_commit_at = _dt(
+                (committer if isinstance(committer, dict) else {}).get("date")
+                or (author if isinstance(author, dict) else {}).get("date")
+            )
+
+        if ref is not None:
+            return await self._pin_tag(repo, ref, kind, facts)
+        if not isinstance(branch_commit, dict):
+            facts.errors.append("pin: default branch head could not be resolved")
             return None
-        if branch is None or not isinstance(branch.data, dict):
-            return None
-        commit = branch.data.get("commit") or {}
-        sha = commit.get("sha")
-        verification = (commit.get("commit") or {}).get("verification") or {}
+        sha = branch_commit.get("sha")
+        verification = (
+            branch_commit_data.get("verification") if isinstance(branch_commit_data, dict) else None
+        ) or {}
+        if not isinstance(verification, dict):
+            verification = {}
         if not isinstance(sha, str):
             return None
-        return Pin(ref=repo.default_branch, kind="branch", sha=sha, signature=_signature(verification))
+        return Pin(
+            ref=repo.default_branch,
+            kind="branch",
+            sha=sha,
+            signature=_signature(verification),
+            committed_at=facts.default_branch_commit_at,
+        )
 
-    async def _pin_tag(self, repo: Repo, tag: str, kind: Literal["release", "tag", "branch"]) -> Pin | None:
+    async def _pin_tag(
+        self, repo: Repo, tag: str, kind: Literal["release", "tag", "branch"], facts: DeepFacts
+    ) -> Pin | None:
         ref = await self.client.get(self._path(repo.full_name, "git", "ref", "tags", tag), ttl=6 * HOUR)
         obj = ref.data.get("object") if ref is not None and isinstance(ref.data, dict) else None
         if not isinstance(obj, dict) or not isinstance(obj.get("sha"), str):
@@ -500,20 +601,34 @@ class GitHubSource:
             target = tag_obj.data.get("object") or {}
             sha = target.get("sha")
             sig = _signature(tag_obj.data.get("verification") or {})
-            if sig == "unsigned" and isinstance(sha, str):
-                sig = await self._commit_signature(repo, sha)
+            committed_at = None
+            if isinstance(sha, str):
+                try:
+                    commit_sig, committed_at = await self._commit_metadata(repo, sha)
+                    if sig == "unsigned":
+                        sig = commit_sig
+                except GitHubError as exc:
+                    if sig == "unsigned":
+                        raise
+                    facts.errors.append(f"pin commit date: {exc}")
         else:
             sha = obj["sha"]
-            sig = await self._commit_signature(repo, sha)
+            sig, committed_at = await self._commit_metadata(repo, sha)
         if not isinstance(sha, str):
             return None
-        return Pin(ref=tag, kind=kind, sha=sha, signature=sig)
+        return Pin(ref=tag, kind=kind, sha=sha, signature=sig, committed_at=committed_at)
 
-    async def _commit_signature(self, repo: Repo, sha: str) -> str:
+    async def _commit_metadata(self, repo: Repo, sha: str) -> tuple[str, datetime | None]:
         c = await self.client.get(self._path(repo.full_name, "git", "commits", sha), ttl=DAY)
         if c is None or not isinstance(c.data, dict):
-            return "unknown"
-        return _signature(c.data.get("verification") or {})
+            return "unknown", None
+        committer = c.data.get("committer")
+        author = c.data.get("author")
+        committed_at = _dt(
+            (committer if isinstance(committer, dict) else {}).get("date")
+            or (author if isinstance(author, dict) else {}).get("date")
+        )
+        return _signature(c.data.get("verification") or {}), committed_at
 
     async def _ci(self, repo: Repo, sha: str, facts: DeepFacts) -> CiState:
         try:

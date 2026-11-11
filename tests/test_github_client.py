@@ -53,6 +53,24 @@ def test_token_only_in_authorization_header() -> None:
     assert req.headers["user-agent"].startswith("reuse-layer/")
 
 
+def test_debug_logs_show_api_shape_without_body_or_token(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("DEBUG", logger="reuse_layer.sources.github")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [{"full_name": "a/public"}], "private_data": "do not log"})
+
+    c = _client(httpx.MockTransport(handler))
+    run(c.get("/search/repositories", params={"q": "token cost github_pat_TESTTOKEN_abcdefghijklmnop"}))
+
+    logs = caplog.text
+    assert "GitHub API request: GET /search/repositories" in logs
+    assert "token cost" in logs
+    assert "items=1" in logs
+    assert "do not log" not in logs
+    assert "github_pat_TESTTOKEN_abcdefghijklmnop" not in logs
+    assert TOKEN not in logs
+
+
 def test_private_items_are_dropped_before_caching() -> None:
     store = Store(":memory:")
 

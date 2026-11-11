@@ -209,9 +209,17 @@ class FakeGitHub:
             )
         m = re.match(r"^/git/commits/(.+)$", rest)
         if m:
+            tag_sha = m.group(1)
+            commit_days = next(
+                (i * 45 + 5 for i in range(max(1, r.releases)) if sha_for(name, f"v1.{i}.0") == tag_sha),
+                r.pushed_days,
+            )
             return httpx.Response(
                 200,
-                json={"verification": {"verified": r.signature == "valid", "reason": r.signature}},
+                json={
+                    "verification": {"verified": r.signature == "valid", "reason": r.signature},
+                    "committer": {"date": iso(commit_days)},
+                },
                 headers=headers,
             )
         m = re.match(r"^/branches/(.+)$", rest)
@@ -221,7 +229,10 @@ class FakeGitHub:
                 json={
                     "commit": {
                         "sha": sha_for(name, "main"),
-                        "commit": {"verification": {"verified": False, "reason": "unsigned"}},
+                        "commit": {
+                            "verification": {"verified": False, "reason": "unsigned"},
+                            "committer": {"date": iso(r.pushed_days)},
+                        },
                     }
                 },
                 headers=headers,

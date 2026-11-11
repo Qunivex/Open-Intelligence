@@ -49,6 +49,12 @@ Try it from the shell:
 reuse-layer find "Estimate the cost of LLM API usage across providers" -c "LLM pricing data | model prices" -c "token counting | tokenizer" --avoid "option pricing" --language python
 ```
 
+For detailed local diagnostics, run `reuse-layer -vv find ...` (or set
+`REUSE_LAYER_LOG_LEVEL=DEBUG` for an MCP server). Diagnostics go to stderr and include the structured
+capabilities/candidates, sanitized GitHub queries, API endpoint/status/cache/timing and response counts. They
+never log authorization headers or full API response bodies. Debug queries and repository names can still
+contain your search terms, so use debug logging only where those terms are okay to appear in local logs.
+
 ## The config file (all API keys live here)
 
 One TOML file, per user, **outside your projects**: `%APPDATA%\reuse-layer\config.toml` on Windows,
@@ -116,6 +122,12 @@ score(p) = gate(p) · [0.35·relevance + 0.25·trust + 0.20·track record + 0.10
 | Verified | Upstream CI (check runs) on the pinned commit; no sandbox in v1 |
 | Tier | Owner curation: 1 = foundation/government/public-goods owner (registry), 2 = verified organization, 3 = other |
 | Explore | At most one of three slots goes to a **newer** project (or a sudden riser in probation) that passes every gate, chosen by Thompson sampling |
+
+`newer_than_days` measures repository age for exploration; it does not determine whether a release or branch is fresh.
+Each pick reports the pinned commit timestamp and default-branch head timestamp in `ref_freshness`, including
+whether the branch head is newer and by how many days. The layer still pins to the latest stable release, then
+the highest version tag, then the default branch; it does not silently substitute a moving branch for a release.
+Commit freshness is reported as evidence and does not currently change the ranking score.
 
 ## Security gates (fail closed)
 

@@ -101,6 +101,13 @@ For a multi-component need, make one call per component.
 
 ### 7. Present the result
 
+Give a concise, user-visible **discovery trace**, not private chain-of-thought: state the interpreted job and
+artifact, key constraints, selected capabilities and avoid-phrases, then list the `search_github` queries
+actually used and the candidate names passed to `find_reusable`. This lets the user audit how the request was
+translated without exposing hidden reasoning. Do not claim to have logged API internals; the server's `-vv` /
+`REUSE_LAYER_LOG_LEVEL=DEBUG` diagnostics report structured inputs, HTTP status/cache/timing and response
+counts, not full response bodies.
+
 - **reuse**: list the picks in order: name, one-line reason from `why`, notable `risks`, and the exact
   `get` command with the pinned `commit`. Say that a pick marked `explore` is newer and less proven.
 - **build_yourself**: say so and why, and mention the closest match.

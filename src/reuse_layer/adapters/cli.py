@@ -16,6 +16,7 @@ import asyncio
 import getpass
 import json
 import logging
+import os
 import shutil
 import sys
 from importlib import resources
@@ -52,10 +53,21 @@ _WRITE_SCOPES = {
 }
 
 
-def _setup_logging(verbose: bool) -> None:
+def _setup_logging(verbose: int) -> None:
+    level = logging.DEBUG if verbose >= 2 else logging.INFO if verbose else logging.WARNING
+    requested_level = os.environ.get("REUSE_LAYER_LOG_LEVEL", "").upper()
+    if requested_level:
+        configured_level = logging.getLevelNamesMapping().get(requested_level)
+        if isinstance(configured_level, int):
+            level = configured_level
     handler = logging.StreamHandler(sys.stderr)  # stdout is the MCP protocol channel
     handler.addFilter(redaction_filter())
-    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, handlers=[handler], force=True)
+    logging.basicConfig(level=level, handlers=[handler], force=True)
+    if requested_level and not isinstance(logging.getLevelNamesMapping().get(requested_level), int):
+        logging.getLogger(__name__).warning(
+            "ignoring invalid REUSE_LAYER_LOG_LEVEL=%r; use DEBUG, INFO, WARNING, ERROR or CRITICAL",
+            requested_level,
+        )
 
 
 def _load(args: argparse.Namespace) -> Settings:
@@ -226,6 +238,31 @@ def _print_find(r: dict[str, Any]) -> None:
         print(f"   {p['summary']}")
         for w in p["why"]:
             print(f"   + {w}")
+        freshness = p.get("ref_freshness")
+        if isinstance(freshness, dict):
+            pinned_at = freshness.get("pinned_commit_at")
+            branch = freshness.get("default_branch")
+            branch_at = freshness.get("default_branch_commit_at")
+            if pinned_at and branch and branch_at:
+                if p["pin"]["ref"] == branch:
+                    status = "pinned ref is the default branch head"
+                elif freshness.get("default_branch_is_newer") is True:
+                    minutes = freshness.get("default_branch_ahead_minutes")
+                    days = freshness.get("default_branch_ahead_days")
+                    if isinstance(minutes, int | float) and minutes < 60:
+                        difference = f"{minutes:g} minutes"
+                    elif isinstance(minutes, int | float) and minutes < 1440:
+                        difference = f"{minutes / 60:.1f} hours"
+                    elif isinstance(days, int | float):
+                        difference = f"{days:g} days"
+                    else:
+                        difference = "a newer commit"
+                    status = f"{branch} is newer than pinned {p['pin']['ref']} by {difference}"
+                else:
+                    status = f"{branch} is not newer than pinned {p['pin']['ref']}"
+                print(f"   ref freshness: pinned {pinned_at}; branch head {branch_at} ({status})")
+            else:
+                print("   ref freshness: commit date unavailable")
         for k in p.get("risks", []):
             print(f"   ! {k}")
         print(f"   get: {p['get']}")
@@ -284,7 +321,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version", version=f"reuse-layer {__version__}")
     p.add_argument("--config", help="path to the config file (default: per-user config directory)")
-    p.add_argument("-v", "--verbose", action="store_true")
+    p.add_argument(
+        "-v", "--verbose", action="count", default=0, help="increase logging (-vv for API diagnostics)"
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("mcp", help="run the MCP server on stdio").set_defaults(fn=cmd_mcp)

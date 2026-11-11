@@ -131,12 +131,14 @@ class Pin:
     kind: Literal["release", "tag", "branch"]
     sha: str  # full commit SHA (the hash every pick is pinned to)
     signature: str  # valid | unsigned | <GitHub verification reason>
+    committed_at: datetime | None = None
 
 
 @dataclass
 class DeepFacts:
     readme: str | None = None
     releases: list[Release] = field(default_factory=list)
+    default_branch_commit_at: datetime | None = None
     contributors: int | None = None
     contributors_capped: bool = False
     top_share: float | None = None

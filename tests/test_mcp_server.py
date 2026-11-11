@@ -110,3 +110,4 @@ def test_discovery_prompt(world: FakeGitHub, make_engine: Callable[..., Engine])
     text = got.messages[0].content.text
     assert "Why not keywords" in text and "a pricing model for LLM providers" in text
     assert not discovery_workflow().startswith("---")
+    assert "user-visible **discovery trace**" in text
