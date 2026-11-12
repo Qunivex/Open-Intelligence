@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import pytest
 
-from conftest import NOW
+from conftest import NOW, make_repo
 from reuse_layer.config import RankingSettings
 from reuse_layer.core import licenses, ranking, signals
 from reuse_layer.core.cards import build_card
@@ -19,27 +19,7 @@ from reuse_layer.core.text import sanitize
 
 
 def repo(name: str = "acme/thing", **kw: object) -> Repo:
-    base: dict[str, object] = dict(
-        full_name=name,
-        html_url=f"https://github.com/{name}",
-        description="",
-        topics=(),
-        language="Python",
-        license_spdx="MIT",
-        archived=False,
-        disabled=False,
-        fork=False,
-        is_template=False,
-        created_at=NOW - timedelta(days=900),
-        pushed_at=NOW - timedelta(days=3),
-        default_branch="main",
-        owner_login=name.split("/")[0],
-        owner_type="Organization",
-        stars=100,
-        forks=10,
-    )
-    base.update(kw)
-    return Repo(**base)  # type: ignore[arg-type]
+    return make_repo(name, **{"stars": 100, **kw})
 
 
 POLICY = GatePolicy("permissive", 30, 730, False, False, False, "python")

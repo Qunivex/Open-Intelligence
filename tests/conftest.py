@@ -16,6 +16,7 @@ import pytest
 
 from reuse_layer.config import Secret, Settings
 from reuse_layer.core.engine import Engine
+from reuse_layer.core.models import Repo
 from reuse_layer.core.store import Store
 from reuse_layer.sources.github import GitHubClient, GitHubSource
 
@@ -400,6 +401,30 @@ def make_engine() -> Callable[..., Engine]:
         return Engine(settings, store=store, sources=[source], now=lambda: NOW, seed=seed)
 
     return factory
+
+
+def make_repo(name: str = "acme/thing", **fields: Any) -> Repo:
+    """A healthy repository record; ``fields`` override any attribute."""
+    base: dict[str, Any] = dict(
+        full_name=name,
+        html_url=f"https://github.com/{name}",
+        description="",
+        topics=(),
+        language="Python",
+        license_spdx="MIT",
+        archived=False,
+        disabled=False,
+        fork=False,
+        is_template=False,
+        created_at=NOW - timedelta(days=900),
+        pushed_at=NOW - timedelta(days=3),
+        default_branch="main",
+        owner_login=name.split("/")[0],
+        owner_type="Organization",
+        stars=10,
+        forks=10,
+    )
+    return Repo(**{**base, **fields})
 
 
 def as_json(text: str) -> Any:

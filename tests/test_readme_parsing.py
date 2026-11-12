@@ -11,38 +11,17 @@ made a project look as if it lacked capabilities its README lists:
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 
-from conftest import NOW
+from conftest import make_repo
 from reuse_layer.core.cards import build_card
-from reuse_layer.core.models import Card, Repo
+from reuse_layer.core.models import Card
 from reuse_layer.core.relevance import LexicalJudge, Need
 from reuse_layer.core.text import looks_like_injection, readme_sections, strip_markdown_noise, tokens
 
 
 def card(readme: str, description: str = "A toolkit", name: str = "acme/toolkit") -> Card:
-    repo = Repo(
-        full_name=name,
-        html_url=f"https://github.com/{name}",
-        description=description,
-        topics=(),
-        language="Python",
-        license_spdx="MIT",
-        archived=False,
-        disabled=False,
-        fork=False,
-        is_template=False,
-        created_at=NOW - timedelta(days=900),
-        pushed_at=NOW - timedelta(days=3),
-        default_branch="main",
-        owner_login=name.split("/")[0],
-        owner_type="Organization",
-        stars=10,
-        forks=10,
-    )
-    return build_card(repo, readme)
+    return build_card(make_repo(name, description=description), readme)
 
 
 def covers(capability: str, c: Card) -> bool:

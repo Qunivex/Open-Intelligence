@@ -379,6 +379,15 @@ def _dt(value: Any) -> datetime | None:
         return None
 
 
+def _commit_date(commit: Mapping[str, Any]) -> datetime | None:
+    """When a git commit object was committed (its author date when no committer is recorded)."""
+    committer, author = commit.get("committer"), commit.get("author")
+    return _dt(
+        (committer if isinstance(committer, dict) else {}).get("date")
+        or (author if isinstance(author, dict) else {}).get("date")
+    )
+
+
 def _int(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
@@ -731,12 +740,7 @@ class GitHubSource:
         branch_commit = branch.data.get("commit") if branch and isinstance(branch.data, dict) else None
         branch_commit_data = branch_commit.get("commit") if isinstance(branch_commit, dict) else None
         if isinstance(branch_commit_data, dict):
-            committer = branch_commit_data.get("committer")
-            author = branch_commit_data.get("author")
-            facts.default_branch_commit_at = _dt(
-                (committer if isinstance(committer, dict) else {}).get("date")
-                or (author if isinstance(author, dict) else {}).get("date")
-            )
+            facts.default_branch_commit_at = _commit_date(branch_commit_data)
 
         if ref is not None:
             try:
@@ -800,13 +804,7 @@ class GitHubSource:
         c = await self.client.get(self._path(repo.full_name, "git", "commits", sha), ttl=DAY)
         if c is None or not isinstance(c.data, dict):
             return "unknown", None
-        committer = c.data.get("committer")
-        author = c.data.get("author")
-        committed_at = _dt(
-            (committer if isinstance(committer, dict) else {}).get("date")
-            or (author if isinstance(author, dict) else {}).get("date")
-        )
-        return _signature(c.data.get("verification") or {}), committed_at
+        return _signature(c.data.get("verification") or {}), _commit_date(c.data)
 
     async def _ci(self, repo: Repo, sha: str, facts: DeepFacts) -> CiState:
         path = self._path(repo.full_name, "commits", sha, "check-runs")

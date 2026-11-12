@@ -40,9 +40,9 @@ import logging
 import random
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -57,6 +57,7 @@ from reuse_layer.sources import build_sources
 from reuse_layer.sources.base import RateLimited, Source, SourceError
 
 log = logging.getLogger(__name__)
+T = TypeVar("T")
 
 # Sent with every result so that no gate, score or verdict is read as more than it is.
 LIMITS = (
@@ -243,46 +244,37 @@ class Engine:
 
         # A search or lookup that fails is not the same as one that finds nothing: the first returns
         # a problem, and only the second counts as evidence that nothing is there.
-        async def run_search(i: int, q: str) -> tuple[int, list[Repo], str | None]:
+        async def attempt(call: Awaitable[T]) -> tuple[T | None, str | None]:
+            """(result, None), or (None, why it could not be completed)."""
             nonlocal rate_limited
             try:
-                return i, await source.search(q, per_page=15), None
+                return await call, None
             except RateLimited:
                 rate_limited = True
-                return i, [], "rate limited"
+                return None, "rate limited"
             except SourceError as exc:
-                log.info("search failed: %s", exc)
-                return i, [], f"{source.name} error"
+                log.info("%s request failed: %s", source.name, exc)
+                return None, f"{source.name} error"
 
-        async def run_resolve(ref: str) -> tuple[str, Repo | None, str | None]:
-            nonlocal rate_limited
-            try:
-                return ref, await source.resolve(ref), None
-            except RateLimited:
-                rate_limited = True
-                return ref, None, "rate limited"
-            except SourceError as exc:
-                log.info("resolve failed: %s", exc)
-                return ref, None, f"{source.name} error"
-
+        refs = list(dict.fromkeys(req.candidates))
         resolved, searched = await asyncio.gather(
-            asyncio.gather(*(run_resolve(r) for r in dict.fromkeys(req.candidates))),
-            asyncio.gather(*(run_search(i, q) for i, q in enumerate(queries))),
+            asyncio.gather(*(attempt(source.resolve(r)) for r in refs)),
+            asyncio.gather(*(attempt(source.search(q, per_page=15)) for q in queries)),
         )
         # Decisive checks that could not be completed, as (what, about). Any entry rules out a
         # negative verdict.
         gaps: list[tuple[str, str]] = []
-        for ref, repo, problem in resolved:
+        for ref, (repo, problem) in zip(refs, resolved, strict=True):
             if repo is not None:
                 add(repo, "agent")
             elif problem is None:
                 unresolved.append(sanitize(ref, 100))
             else:
                 gaps.append((f"candidate not verified ({problem})", sanitize(ref, 100)))
-        for i, repos, problem in searched:
+        for i, (repos, problem) in enumerate(searched):
             if problem is not None:
                 gaps.append((f"search not completed ({problem})", queries[i]))
-            for repo in repos:
+            for repo in repos or []:
                 add(repo, f"q{i}")
 
         candidates = sorted(
@@ -290,7 +282,7 @@ class Engine:
         )[: cfg.github.max_candidates]
         log.info(
             "candidate gathering completed: resolved_inputs=%d unresolved_inputs=%d unique_candidates=%d",
-            sum(repo is not None for _, repo, _ in resolved),
+            sum(repo is not None for repo, _ in resolved),
             len(unresolved),
             len(candidates),
         )

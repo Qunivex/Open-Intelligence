@@ -7,11 +7,10 @@ gap that is not there, and words gathered from unrelated lines report coverage t
 from __future__ import annotations
 
 import random
-from datetime import timedelta
 
 import pytest
 
-from conftest import NOW
+from conftest import make_repo
 from reuse_layer.config import RankingSettings
 from reuse_layer.core import ranking
 from reuse_layer.core.cards import build_card
@@ -21,25 +20,7 @@ from reuse_layer.core.text import stem, tokens
 
 
 def repo(name: str, description: str = "", topics: tuple[str, ...] = ()) -> Repo:
-    return Repo(
-        full_name=name,
-        html_url=f"https://github.com/{name}",
-        description=description,
-        topics=topics,
-        language="Python",
-        license_spdx="MIT",
-        archived=False,
-        disabled=False,
-        fork=False,
-        is_template=False,
-        created_at=NOW - timedelta(days=900),
-        pushed_at=NOW - timedelta(days=3),
-        default_branch="main",
-        owner_login=name.split("/")[0],
-        owner_type="Organization",
-        stars=10,
-        forks=10,
-    )
+    return make_repo(name, description=description, topics=topics)
 
 
 def card(name: str, description: str, readme: str = "", topics: tuple[str, ...] = ()) -> Card:

@@ -17,13 +17,12 @@ import random
 import re
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import timedelta
 from typing import Any
 
 import pytest
 from mcp import Client
 
-from conftest import NOW, FakeGitHub, FakeRepo, make_settings, run
+from conftest import NOW, FakeGitHub, FakeRepo, make_repo, make_settings, run
 from reuse_layer.adapters.cli import _print_find
 from reuse_layer.adapters.mcp_server import SERVER_INSTRUCTIONS, build_server, discovery_workflow
 from reuse_layer.config import GitHubSettings, RankingSettings
@@ -351,25 +350,7 @@ def test_a_model_judge_cannot_turn_a_gap_into_coverage(make_engine: Callable[...
 
 
 def _repo(name: str, stars: int = 10) -> Repo:
-    return Repo(
-        full_name=name,
-        html_url=f"https://github.com/{name}",
-        description="",
-        topics=(),
-        language="Python",
-        license_spdx="MIT",
-        archived=False,
-        disabled=False,
-        fork=False,
-        is_template=False,
-        created_at=NOW - timedelta(days=900),
-        pushed_at=NOW - timedelta(days=3),
-        default_branch="main",
-        owner_login=name.split("/")[0],
-        owner_type="Organization",
-        stars=stars,
-        forks=10,
-    )
+    return make_repo(name, stars=stars)
 
 
 def _scored(
