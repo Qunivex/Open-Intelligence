@@ -98,6 +98,7 @@ class Engine:
         store: Store | None = None,
     ) -> Engine:
         store = store or Store(settings.db_path())
+        store.cache_prune()  # READMEs are cached at up to 300 kB each: drop what is weeks old
         client = GitHubClient(
             token=settings.secret("github"),
             api_url=settings.github.api_url,
@@ -337,7 +338,7 @@ class Engine:
             s.card = build_card(s.repo, s.deep.readme if s.deep else None)
             j = self.lexical.judge(need, s.card)
             s.relevance = j.score
-            s.covered, s.missing = j.covered, j.missing
+            s.covered, s.found_in, s.missing = j.covered, j.found_in, j.missing
             if must:
                 if j.covered:
                     s.relevance_detail.append(
@@ -506,7 +507,7 @@ class Engine:
             "coverage": _coverage(must, top, picks, known=decision.verdict != "inconclusive"),
             "evidence": found,
             "unresolved_checks": open_checks[:8],
-            "picks": [_pick(p) for p in picks],
+            "picks": [_pick(p, include_normalized=req.include_normalized) for p in picks],
             "also_passed": also_passed[:5],
             "rejected": [_rejection(s) for s in rejected[:6]],
             "unresolved": unresolved[:10],
@@ -600,6 +601,10 @@ def _coverage(
         "missing": list(top.missing) if top else list(must),
     }
     if top is not None:
+        if top.covered:
+            # Aligned with `covered`: whether each rests on the repository's own name, topics and
+            # description ("metadata") or on a statement in its README ("readme").
+            out["found_in"] = list(top.found_in)
         elsewhere = {
             m: [p.repo.full_name for p in picks if p is not top and m in p.covered] for m in top.missing
         }
@@ -626,13 +631,17 @@ def _constraints(p: GatePolicy, excluded: int) -> dict[str, Any]:
     return out
 
 
-def _pick(s: Scored) -> dict[str, Any]:
+def _pick(s: Scored, *, include_normalized: bool = False) -> dict[str, Any]:
     deep, pin = s.deep, s.deep.pin if s.deep else None
     assert pin is not None  # provenance gate guarantees a pin
     url = s.repo.html_url
+    artifact_id = f"pkg:github/{s.repo.full_name}@{pin.ref}"
     pin_time = pin.committed_at
     branch_time = deep.default_branch_commit_at if deep else None
     branch_delta = (branch_time - pin_time).total_seconds() / 86400 if branch_time and pin_time else None
+    gate_details = {g.gate: g.detail for g in s.gates}
+    unresolved = unresolved_checks(s)
+    risks = s.risks[:6]
     why = [*s.relevance_detail]
     if s.preference_detail:
         why.append(_cap(s.preference_detail))
@@ -641,7 +650,7 @@ def _pick(s: Scored) -> dict[str, Any]:
         n = len(s.found_by) - 1
         why.append(f"Named by your agent and matched by {n} search{'es' if n != 1 else ''}")
     pick: dict[str, Any] = {
-        "id": f"pkg:github/{s.repo.full_name}@{pin.ref}",
+        "id": artifact_id,
         "repo": url,
         "pin": {"ref": pin.ref, "commit": pin.sha},
         "ref_freshness": {
@@ -667,12 +676,47 @@ def _pick(s: Scored) -> dict[str, Any]:
             "verified": s.verified,
             "tier": s.tier_score,
         },
-        "gates": {g.gate: g.detail for g in s.gates},
-        "unresolved_checks": unresolved_checks(s),
-        "integration_risks": s.risks[:6],
+        "gates": gate_details,
+        "unresolved_checks": unresolved,
+        "integration_risks": risks,
         "tier": "newer" if (s.newer or s.probation) else "established",
         "source": {"name": "GitHub", "tier": s.tier},
     }
+    if include_normalized:
+        pick["normalized"] = {
+            "schema_version": 1,
+            "provider_id": "github",
+            "artifact_type": "repository",
+            "id": artifact_id,
+            "name": s.repo.full_name,
+            "url": url,
+            "version": pin.ref,
+            "revision": pin.sha,
+            "license": s.repo.license_spdx,
+            "evidence": {
+                "capabilities": {
+                    "covered": [
+                        {
+                            "name": capability,
+                            "source": s.found_in[index] if index < len(s.found_in) else "unknown",
+                        }
+                        for index, capability in enumerate(s.covered)
+                    ],
+                    "missing": list(s.missing),
+                },
+                "checks": {
+                    g.gate: {
+                        "status": "passed" if g.passed else "failed" if g.complete else "unchecked",
+                        "detail": g.detail,
+                    }
+                    for g in s.gates
+                },
+            },
+            "limitations": {
+                "unresolved_checks": unresolved,
+                "integration_risks": risks,
+            },
+        }
     if _SAFE_REF.match(pin.ref) and pin.kind != "branch":
         pick["get"] = f"git clone --depth 1 --branch {pin.ref} {url}.git  # then check HEAD is {pin.sha[:12]}"
     else:

@@ -201,6 +201,8 @@ _UNRESOLVED = {
     "community": "community health not read",
     "org": "organization verification not read",
     "checks": "upstream CI status not read",
+    "check runs": "upstream CI has more check runs than were read, so it is not reported as passing",
+    "pin": "release tag could not be resolved to a commit",
 }
 
 
@@ -211,9 +213,14 @@ def unresolved_checks(s: Scored) -> list[str]:
         return []
     failed = sorted({e.split(":", 1)[0] for e in deep.errors})
     out = [_UNRESOLVED.get(name, f"{name} check did not complete") for name in failed]
+    if deep.advisories_unattributed:
+        out.append(
+            f"{deep.advisories_unattributed} advisories for a package with this name cite no repository: "
+            "not counted against it, review them"
+        )
     if deep.ci == "pending":
         out.append("upstream CI still running on the pinned commit")
-    elif deep.ci == "unknown" and "checks" not in failed:
+    elif deep.ci == "unknown" and not {"checks", "check runs"} & set(failed):
         out.append("upstream CI status unknown")
     if deep.pin is not None and deep.pin.signature == "unknown":
         out.append("commit signature could not be read")

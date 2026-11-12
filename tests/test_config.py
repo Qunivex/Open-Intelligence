@@ -33,6 +33,7 @@ def test_template_is_valid_and_has_no_keys() -> None:
     assert s.ranking.relevance == 0.35 and s.ranking.trust == 0.25 and s.ranking.preference == 0.20
     assert s.ranking.verified == 0.10 and s.ranking.tier == 0.10
     assert s.gates.license_policy == "permissive" and s.gates.min_age_days == 30
+    assert s.github.budget_ms == 5000 and s.github.deadline_ms == 30000
     assert s.relevance.model == "claude-haiku-5-5"
 
 

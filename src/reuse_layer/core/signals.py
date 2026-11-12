@@ -53,11 +53,17 @@ def trust(repo: Repo, deep: DeepFacts, now: datetime) -> tuple[float, list[str],
 
     stable = [r for r in deep.releases if not r.prerelease]
     in_year = [r for r in stable if recent(r.published_at, 365, now)]
+    unread = {e.split(":", 1)[0] for e in deep.errors} & {"releases", "tags"}
     if stable:
         cadence = min(1.0, len(in_year) / 6)
         latest = stable[0]
         when = latest.published_at.date().isoformat() if latest.published_at else "date unknown"
         evidence.append(f"{len(in_year)} releases in the last year (latest {latest.tag}, {when})")
+    elif unread:
+        # Not being able to list releases is not the same as there being none: say which it was.
+        cadence = 0.0
+        ref = f"{deep.pin.kind} {deep.pin.ref}" if deep.pin else "nothing"
+        risks.append(f"Release history could not be read: pinned to {ref}, which may not be the latest")
     elif deep.pin is not None and deep.pin.kind == "tag":
         cadence = 0.3
         evidence.append(f"versioned tags, no GitHub releases (latest {deep.pin.ref})")

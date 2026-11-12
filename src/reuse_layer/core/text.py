@@ -15,11 +15,14 @@ _INVISIBLE = re.compile("[​-‏‪-‮⁠-⁤⁦-⁩﻿­]")
 _WS = re.compile(r"\s+")
 
 # Phrases that try to steer a model that reads the text. Flagged, never obeyed.
+# Every pattern is an instruction or an address to the reader. Vocabulary is not: "tool call" and
+# "system prompt" are what LLM projects are about, and matching them threw away the README of
+# exactly the projects this layer is most often asked about.
 _INJECTION = re.compile(
     r"(ignore (all |any )?(previous|prior|above) (instructions|prompts)|disregard (the|all|previous) instructions|"
-    r"you are (an? )?(ai|assistant|language model|llm)|system prompt|rank (this|me|us) (first|highest|#?1)|"
+    r"you are (an? )?(ai|assistant|language model|llm)|rank (this|me|us) (first|highest|#?1)|"
     r"recommend (this|our) (repo|project|package) (above|over|first)|<\s*/?\s*(system|assistant|instructions?)\s*>|"
-    r"as an ai (agent|assistant)|tool[_ ]?call|do not tell the user)",
+    r"as an ai (agent|assistant)|do not tell the user)",
     re.IGNORECASE,
 )
 
@@ -38,7 +41,13 @@ def sanitize(text: object, limit: int = 300) -> str:
 
 
 def looks_like_injection(text: str) -> bool:
-    return bool(_INJECTION.search(text))
+    """True when text outside code blocks addresses or instructs an AI reader.
+
+    Fenced code is left out: it is where LLM projects show example prompts ("You are an AI
+    assistant..."), and it never reaches a capability card anyway. HTML comments are kept in, because
+    a comment is where a README would hide an instruction from human readers.
+    """
+    return bool(_INJECTION.search(_FENCE.sub(" ", text)))
 
 
 # --------------------------------------------------------------------------- markdown → plain text
@@ -52,8 +61,16 @@ _REF_LINK = re.compile(r"^\s*\[[^\]]+\]:\s*\S+.*$", re.MULTILINE)
 _BARE_URL = re.compile(r"https?://\S+")
 _INLINE_CODE = re.compile(r"`([^`]{0,80})`")
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+# A title with a line of ===, ---, ~~~ or ^^^ under it: how reStructuredText READMEs (common for
+# Python projects) write every heading, and Markdown's other heading style.
+_UNDERLINED = re.compile(
+    r"^[ \t]*([^\s#|>*+\-][^\n]{1,79}?)[ \t]*\n[ \t]*(?:={3,}|-{3,}|~{3,}|\^{3,})[ \t]*$", re.MULTILINE
+)
+_RULE = re.compile(r"[=\-~^]{3,}")
 _BULLET = re.compile(r"^\s{0,6}(?:[-*+]|\d+[.)])\s+(.+)$", re.MULTILINE)
-_EMPH = re.compile(r"[*_]{1,3}([^*_]+)[*_]{1,3}")
+# Inline emphasis only: the markers hug the text and stay on one line. A looser pattern pairs the "*"
+# of one bullet with the "*" of the next and deletes every bullet in a "*"-style list.
+_EMPH = re.compile(r"(?<![\w*_])([*_]{1,3})(?=\S)([^*_\n]+?)(?<=\S)\1(?![\w*_])")
 
 
 def strip_markdown_noise(md: str) -> str:
@@ -65,19 +82,19 @@ def strip_markdown_noise(md: str) -> str:
     md = _HTML_TAG.sub(" ", md)
     md = _BARE_URL.sub(" ", md)
     md = _INLINE_CODE.sub(r"\1", md)
-    md = _EMPH.sub(r"\1", md)
+    md = _EMPH.sub(r"\2", md)
     return md
 
 
 def readme_sections(md: str) -> tuple[list[str], list[str], str]:
     """Split a README into (headings, bullet items, intro prose). All sanitised."""
     clean = strip_markdown_noise(md)
-    headings = [sanitize(h, 80) for h in _HEADING.findall(clean)]
+    headings = [sanitize(h, 80) for h in _HEADING.findall(clean) + _UNDERLINED.findall(clean)]
     bullets = [sanitize(b, 140) for b in _BULLET.findall(clean)]
     prose_lines = []
     for line in clean.splitlines():
         s = line.strip()
-        if not s or s.startswith(("#", "|", ">")) or _BULLET.match(line):
+        if not s or s.startswith(("#", "|", ">")) or _BULLET.match(line) or _RULE.fullmatch(s):
             continue
         prose_lines.append(s)
         if sum(len(p) for p in prose_lines) > 1500:
@@ -109,59 +126,131 @@ GENERIC = frozenset(
 )
 
 _SPLIT_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAMEL_WORD = re.compile(r"[A-Za-z0-9]*[a-z0-9][A-Z][A-Za-z0-9]*")
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9+#]*")
 
-# A few equivalences that matter for matching capability text to repo text.
+# Equivalences the inflection rules below cannot reach: synonyms, abbreviations and a few derived
+# forms. Keys and values are stems as `_inflect` produces them, so every form of a word lands on
+# the same entry ("tokenize", "tokenized" and "tokenizing" are all the key "tokeniz").
 _CANON = {
-    "llms": "llm",
-    "large-language-model": "llm",
+    "apis": "api",
     "genai": "llm",
     "gpt": "llm",
-    "prices": "price",
-    "pricing": "price",
-    "priced": "price",
-    "costs": "cost",
-    "costing": "cost",
-    "tokens": "token",
+    "tokeniz": "token",
     "tokenizer": "token",
-    "tokenizers": "token",
     "tokenization": "token",
-    "tokenize": "token",
-    "estimator": "estimate",
-    "estimation": "estimate",
-    "estimating": "estimate",
-    "estimates": "estimate",
-    "calculator": "calculate",
-    "calculation": "calculate",
-    "calculations": "calculate",
-    "calculating": "calculate",
-    "providers": "provider",
+    "tokenis": "token",
+    "tokeniser": "token",
+    "tokenisation": "token",
+    "estimator": "estimat",
+    "estimation": "estimat",
+    "calculator": "calculat",
+    "calculation": "calculat",
     "auth": "authentication",
     "authn": "authentication",
-    "pdf": "pdf",
+    "authenticat": "authentication",
     "js": "javascript",
     "ts": "typescript",
     "py": "python",
 }
 
+# Words whose ending only looks like an inflection.
+_NOT_INFLECTED = frozenset({"embed"})
 
-def stem(word: str) -> str:
-    w = _CANON.get(word, word)
-    if w != word or len(w) <= 4:
+
+def _consonant(w: str, i: int) -> bool:
+    if w[i] in "aeiou":
+        return False
+    return w[i] != "y" or i == 0 or not _consonant(w, i - 1)
+
+
+def _measure(w: str) -> int:
+    """Porter's m: the number of vowel-then-consonant runs in ``w``."""
+    m, in_vowels = 0, False
+    for i in range(len(w)):
+        if _consonant(w, i):
+            m += in_vowels
+            in_vowels = False
+        else:
+            in_vowels = True
+    return m
+
+
+def _has_vowel(w: str) -> bool:
+    return any(not _consonant(w, i) for i in range(len(w)))
+
+
+def _cvc(w: str) -> bool:
+    """Ends consonant-vowel-consonant (the last not w, x or y): a short stem whose final e matters."""
+    return (
+        len(w) >= 3
+        and _consonant(w, len(w) - 3)
+        and not _consonant(w, len(w) - 2)
+        and _consonant(w, len(w) - 1)
+        and w[-1] not in "wxy"
+    )
+
+
+def _inflect(w: str) -> str:
+    """The inflectional steps of Porter's stemmer (1a, 1b, 1c and 5a), and nothing more.
+
+    "caching", "cached", "caches" and "cache" must meet, as must "logging" and "log", so plurals,
+    -ing, -ed and a silent final e are folded. Porter's measure keeps short words apart: "pipe" does
+    not become "pip", nor "note" "not". The derivational steps are left out on purpose: folding
+    "generate", "general" and "generic" together would report capabilities as covered that are not.
+    """
+    if len(w) <= 3 or w in _NOT_INFLECTED:
         return w
-    for suffix, repl in (("ies", "y"), ("sses", "ss"), ("ing", ""), ("ed", ""), ("es", ""), ("s", "")):
-        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
-            if suffix == "es" and not w.endswith(("ches", "shes", "xes", "zes", "sses")):
-                continue
-            if suffix == "s" and w.endswith(("ss", "us", "is")):
-                continue
-            return w[: len(w) - len(suffix)] + repl
+    # 1a: plurals
+    if (w.endswith("ies") and len(w) > 4) or w.endswith(("ches", "shes", "xes", "zes", "sses")):
+        w = w[:-2]  # "queries" -> "queri", "caches" -> "cach", "classes" -> "class"
+    elif w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        w = w[:-1]
+    # 1b: -eed, -ed, -ing
+    if w.endswith("eed"):
+        if _measure(w[:-3]) > 0:
+            w = w[:-1]
+    elif w not in _NOT_INFLECTED:
+        for suffix in ("ing", "ed"):
+            base = w[: -len(suffix)]
+            if w.endswith(suffix) and _has_vowel(base):
+                if len(base) >= 4 and base[-1] == base[-2] and _consonant(base, len(base) - 1):
+                    if base[-1] not in "lsz":
+                        base = base[:-1]  # "logging" -> "log"; "billing" and "passing" keep theirs
+                elif _measure(base) == 1 and _cvc(base):
+                    base += "e"  # "pricing" -> "price", "typed" -> "type"
+                w = base
+                break
+    # 1c: a final y after a vowel-bearing stem
+    if len(w) >= 4 and w.endswith("y") and _has_vowel(w[:-1]):
+        w = w[:-1] + "i"
+    # 5a: a silent final e
+    if len(w) >= 4 and w.endswith("e"):
+        m = _measure(w[:-1])
+        if m > 1 or (m == 1 and not _cvc(w[:-1])):
+            w = w[:-1]
     return w
 
 
-def tokens(text: str, *, drop_generic: bool = False) -> list[str]:
-    """Lower-cased, stemmed content tokens, in order (duplicates kept)."""
-    text = _SPLIT_CAMEL.sub(" ", text)
+def stem(word: str) -> str:
+    s = _inflect(word)
+    return _CANON.get(s, s)
+
+
+def tokens(text: str, *, drop_generic: bool = False, query: bool = False) -> list[str]:
+    """Lower-cased, stemmed content tokens, in order (duplicates kept).
+
+    A camel-cased word is one word and several. In repository text it yields both ("WebSocket" gives
+    websocket, web, socket), so it matches however the capability is phrased. In a ``query`` (a
+    capability, task or avoid phrase) it yields only the joined form, so "PostgreSQL" asks for
+    postgresql and not for anything that mentions "sql".
+    """
+
+    def camel(m: re.Match[str]) -> str:
+        word = m.group(0)
+        return word.lower() if query else f"{word.lower()} {_SPLIT_CAMEL.sub(' ', word)}"
+
+    text = _CAMEL_WORD.sub(camel, text)
     text = text.replace("-", " ").replace("_", " ").replace("/", " ").lower()
     out = []
     for raw in _TOKEN.findall(text):

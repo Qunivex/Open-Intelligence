@@ -63,6 +63,7 @@ class FindRequest(BaseModel):
     search_queries: list[Query] = Field(default_factory=list, max_length=6)
     avoid: list[Phrase] = Field(default_factory=list, max_length=8)
     context: CallerContext = Field(default_factory=CallerContext)
+    include_normalized: bool = False
 
 
 class OutcomeReport(BaseModel):
@@ -148,6 +149,9 @@ class DeepFacts:
     health_pct: int | None = None
     advisories: list[Advisory] = field(default_factory=list)
     advisories_checked: bool = False
+    # Advisories for a package with this repository's name that name no repository at all: they
+    # can be neither attributed to this project nor ruled out.
+    advisories_unattributed: int = 0
     org_verified: bool | None = None
     pin: Pin | None = None
     ci: CiState = "unknown"
@@ -188,6 +192,7 @@ class Scored:
     deep_error: str | None = None  # why the evidence pass did not run: time budget, rate limit, error
     card: Card | None = None
     covered: tuple[str, ...] = ()  # must-have capabilities the card evidences
+    found_in: tuple[str, ...] = ()  # for each covered one, "metadata" or "readme"
     missing: tuple[str, ...] = ()  # must-have capabilities it does not
     gates: list[GateResult] = field(default_factory=list)
     relevance: float = 0.0

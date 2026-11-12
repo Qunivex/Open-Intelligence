@@ -448,7 +448,13 @@ def test_each_component_gets_its_own_decision(world: FakeGitHub, make_engine: Ca
     engine = make_engine(world)
     counting = run(
         engine.find_reusable(
-            request("openai/tiktoken", "BerriAI/litellm", component="token counting", capabilities=[COUNTING])
+            request(
+                "openai/tiktoken",
+                "BerriAI/litellm",
+                component="token counting",
+                capabilities=[COUNTING],
+                include_normalized=True,
+            )
         )
     )
     hud = run(
@@ -471,7 +477,24 @@ def test_each_component_gets_its_own_decision(world: FakeGitHub, make_engine: Ca
         for p in out["picks"]:
             assert {"status", "license", "vulns", "malware", "provenance"} <= set(p["gates"])
     assert counting["verdict"] == "reuse" and counting["recommendation"]["repo"] == "openai/tiktoken"
-    assert counting["coverage"] == {"must_have": 1, "covered": [COUNTING_LABEL], "missing": []}
+    normalized = counting["picks"][0]["normalized"]
+    assert {
+        "schema_version": 1,
+        "provider_id": "github",
+        "artifact_type": "repository",
+        "name": "openai/tiktoken",
+        "version": normalized["version"],
+        "revision": normalized["revision"],
+        "license": "MIT",
+    }.items() <= normalized.items()
+    assert normalized["evidence"]["capabilities"]["covered"][0]["source"] in ("readme", "metadata")
+    assert normalized["evidence"]["checks"]["license"]["status"] == "passed"
+    assert counting["coverage"] == {
+        "must_have": 1,
+        "covered": [COUNTING_LABEL],
+        "missing": [],
+        "found_in": ["metadata"],  # the repository's own name says "token"
+    }
     gateway = next(p for p in counting["picks"] if p["repo"].endswith("litellm"))
     assert gateway["integration_risks"][0].startswith("No evidence for must-have")
     assert hud["verdict"] == "build_yourself" and "repo" not in hud["recommendation"]
@@ -553,6 +576,7 @@ def test_component_round_trip_over_mcp(world: FakeGitHub, make_engine: Callable[
         "capabilities": [COUNTING],
         "candidates": ["openai/tiktoken"],
         "context": {"language": "python"},
+        "include_normalized": True,
     }
 
     async def go() -> Any:
@@ -563,6 +587,8 @@ def test_component_round_trip_over_mcp(world: FakeGitHub, make_engine: Callable[
     tools, res = run(go())
     data = json.loads(res.content[0].text)
     assert data["component"] == "token counting" and data["verdict"] == "reuse"
+    assert data["picks"][0]["normalized"]["provider_id"] == "github"
+    assert data["picks"][0]["normalized"]["revision"] == data["picks"][0]["pin"]["commit"]
     description = next(t.description for t in tools if t.name == "find_reusable")
     for verdict in ("reuse_partial", "build_yourself", "no_candidates", "inconclusive"):
         assert verdict in description
@@ -801,3 +827,17 @@ def test_instructions_and_skill_forbid_safety_claims_and_explain_the_decision() 
     for verdict in ("reuse_partial", "inconclusive", "no_candidates", "build_yourself"):
         assert f"**{verdict}**" in skill
     assert "never say a project is safe" in skill.lower()
+
+
+def test_skill_covers_the_steps_around_the_tool_call() -> None:
+    skill = discovery_workflow()
+    # before: do not go looking for a dependency the project already has
+    assert "Start with what the project already has" in skill
+    # phrasing: the skill tells the agent how matching works, so capabilities are written to be found
+    assert "one statement" in skill and "Word forms and casing already match" in skill
+    # after: a verdict is evidence from a README, so it is confirmed before anything is built on it
+    assert "### 8. Confirm before you build on it" in skill and "It has not been run" in skill
+    assert "`coverage.found_in`" in skill
+    assert "### 9. After integrating" in skill
+    # the worked example passes only must-haves, and says why the fourth capability is left out
+    assert "The fourth is left out of the call" in skill

@@ -125,6 +125,10 @@ def select(scored: list[Scored], w: RankingSettings, rng: random.Random, k: int 
             and (not full or len(s.missing) <= len(picks[-1].missing))
         ]
         if eligible:
+            # The draw decides which newer project gets the slot, never how good the result is: only
+            # the ones with the best coverage take part, so the verdict does not change run to run.
+            fewest = min(len(s.missing) for s in eligible)
+            eligible = [s for s in eligible if len(s.missing) == fewest]
             choice = max(eligible, key=lambda s: s.total * rng.betavariate(1 + s.pref_good, 1 + s.pref_bad))
             choice.explore = True
             picks = [*picks[: k - 1], choice] if full else [*picks, choice]

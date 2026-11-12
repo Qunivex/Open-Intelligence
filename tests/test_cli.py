@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from reuse_layer.adapters.cli import _print_find
+from reuse_layer.adapters.cli import _print_find, main
 
 
 def test_find_output_shows_pinned_ref_freshness(capsys: Any) -> None:
@@ -74,3 +74,14 @@ def test_find_output_shows_small_freshness_difference_in_minutes(capsys: Any) ->
     )
 
     assert "main is newer than pinned v1.0.0 by 23.4 minutes" in capsys.readouterr().out
+
+
+def test_install_skill_installs_parent_and_github_skills(tmp_path: Any, capsys: Any) -> None:
+    assert main(["install-skill", "--project", str(tmp_path)]) == 0
+
+    skills = tmp_path / ".claude" / "skills"
+    parent = skills / "reuse-discovery" / "SKILL.md"
+    github = skills / "github-oss-discovery" / "SKILL.md"
+    assert parent.exists() and "list_providers" in parent.read_text(encoding="utf-8")
+    assert github.exists() and "find_reusable" in github.read_text(encoding="utf-8")
+    assert "Register the MCP server" in capsys.readouterr().out

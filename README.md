@@ -10,28 +10,13 @@ integration risks. When it could not gather enough evidence to decide (rate limi
 `inconclusive` instead of pretending nothing exists. See [Verdicts and evidence](#verdicts-and-evidence).
 
 v1 follows the *Reuse Layer: Build Plan* with one deliberate scope cut: **GitHub is the only source.**
-Hugging Face, PyPI, npm, deps.dev, OSV and the rest are later versions; the config file already has room
-for their keys.
+The parent discovery skill and provider registry separate user intent from provider-specific search.
+GitHub is active; Hugging Face and Kaggle are listed as planned extensions. See
+[the architecture and flow diagrams](docs/architecture.md).
 
-```
-user: "I want to build a pricing model that helps people understand the cost of
-       implementation using different LLM providers"
-
-agent ── skill: github-oss-discovery ──────────────────────────────────────────────┐
-  1. intent brief   job = estimate/compare LLM API cost across providers          │
-                    not "option pricing", not an ML "model"                       │
-  2. capabilities   per-token price data · token counting · cost calculation      │
-  3. hypotheses     direct tools · gateways that embed price tables · tokenizers  │
-  4. queries        llm cost estimation · "cost per token" in:readme · …          │
-  5. search_github  explore, learn vocabulary from good hits, refine once         │
-└─ find_reusable(task, capabilities, candidates, search_queries, avoid, context) ──┘
-        │  resolve names → metadata gates → enrich shortlist → capability cards
-        │  → relevance + must-have coverage → evidence gates → score
-        │  → top 3 by coverage, then score (+1 explore slot) → verdict
-        ▼
-  verdict · recommendation · coverage{covered, missing} · evidence · unresolved_checks[…]
-  picks: pkg:github/owner/repo@v1.2.3  commit 4e71bbe0…  why[…]  gates{…}  integration_risks[…]
-```
+`reuse-layer install-skill` installs both the provider-neutral `reuse-discovery` parent skill and the
+GitHub-specific `github-oss-discovery` skill. The MCP `list_providers` tool exposes the packaged registry;
+planned providers are clearly marked and are not yet searchable.
 
 ## Quick start
 
@@ -46,9 +31,13 @@ Create the token at <https://github.com/settings/personal-access-tokens/new> as 
 
 ```bash
 reuse-layer doctor                   # checks the config, the token and its scopes (never prints the token)
-reuse-layer install-skill            # installs the discovery skill into ~/.claude/skills
-claude mcp add reuse-layer --scope user -- reuse-layer mcp
+reuse-layer install-skill            # installs the skill and prints the MCP registration command
 ```
+
+Run the `claude mcp add` command printed by `reuse-layer install-skill`. It uses the Python interpreter
+where Reuse Layer is installed, which avoids `PATH` and virtual-environment issues when Claude Code
+launches the server. The shorter `claude mcp add reuse-layer --scope user -- reuse-layer mcp` form works
+only when the `reuse-layer` executable is on Claude Code's `PATH`.
 
 Try it from the shell:
 
@@ -164,6 +153,8 @@ Conservative defaults, documented here and in `core/ranking.py`, and deliberatel
 | Rule | Default | Why |
 | --- | --- | --- |
 | A capability counts as covered | lexical phrase score ≥ 0.6 against the capability card | Below that it is reported as *not evidenced*. That is weaker than "absent", and it is never rounded up. |
+| What counts as evidence | one statement: a single README bullet, heading or sentence, or the repository's name, topics and description taken together | Words spread over unrelated README lines do not add up to a capability. A README statement is read in the context of what the project says it is. |
+| Word forms | inflections and casing are folded (`caching`/`cache`, `WebSocket`/`websocket`); derivations are not (`generate`/`general`) | Folding too little reports gaps that are not there; folding too much reports coverage that is not there. |
 | Who decides coverage | the deterministic lexical judge only | The optional model judge can lower or raise relevance; it cannot turn a gap into coverage. |
 | Must-haves needed for `reuse` | 100% | One gap makes it `reuse_partial`. Leave nice-to-haves out of `capabilities`. |
 | Relevance needed to be recommended | ≥ 0.40 (`ranking.build_yourself_below`) | Unchanged from before. |
@@ -177,7 +168,7 @@ What counts as a **decisive gap** (any one rules out a negative verdict and is l
 - a named candidate that could not be verified (different from `unresolved`, which means GitHub said the
   repository does not exist);
 - a shortlisted candidate whose evidence pass did not run: over the time budget (`github.deadline_ms`,
-  9 s by default), rate limited, or errored;
+  30 s by default), rate limited, or errored;
 - a gate check that could not complete (vulnerability sources unreachable, no commit could be pinned);
 - a README that could not be read for a gate-passing candidate, since its coverage is then unknown.
 
@@ -194,7 +185,7 @@ Each result carries, for its component:
 | Section | Where | Contents |
 | --- | --- | --- |
 | Recommendation | `verdict`, `recommendation` | the recommended `repo` (when there is one), the `reason`, and the `next` step |
-| Coverage summary | `coverage` | `must_have` count, and for the recommended pick `covered` and `missing`; `unknown` when the verdict is `inconclusive` |
+| Coverage summary | `coverage` | `must_have` count, and for the recommended pick `covered` and `missing`; `found_in` says for each covered one whether the evidence is in the `readme` or only in the repository's `metadata` (name, topics, description); `unknown` when the verdict is `inconclusive` |
 | Gate results | `picks[].gates`, `rejected[]` | each gate's finding for every pick; for rejections the gate and reason, with `unchecked: true` when the check could not complete |
 | Unresolved checks | `unresolved_checks`, `picks[].unresolved_checks` | what could not be established, for the component and for each pick |
 | Integration risks | `picks[].integration_risks` | capability gaps first, then licence obligations, maintenance, release and CI risks |
@@ -221,13 +212,21 @@ instead of `no_candidates`: failing closed keeps unverified projects out of the 
 | license | no license, unrecognised (`NOASSERTION`), or outside the caller's policy (default permissive) |
 | age | created less than 30 days ago (unless `allow_new`) |
 | fit | primary language incompatible with the caller's project |
-| vulns | a published high/critical advisory with no fixed version, or one that names no fixed version at all (fix status unknown), from repository advisories + GitHub Advisory Database; or the check could not complete |
+| vulns | a published high/critical advisory with no fixed version, or one that names no fixed version at all (fix status unknown), from repository advisories + GitHub Advisory Database; or the check could not complete: a source that errored, refused (403), was unavailable, or returned a list too long to read to its end (5 pages) |
 | malware | a malware advisory for this repository |
 | provenance | no commit could be pinned, a signature failed verification, or signatures are required and missing |
 | lookalike | the name imitates a more established project and the repo is young or has few contributors |
 
 READMEs are parsed into fixed-schema **capability cards**; text that tries to instruct an AI is detected
-and dropped from the card, and the pick is flagged. See [SECURITY.md](SECURITY.md).
+and dropped from the card, and the pick is flagged. The detector looks for instructions and for text
+addressed to an AI reader, outside code blocks. Ordinary LLM vocabulary such as "tool calls" or "system
+prompt" is not an instruction and does not trip it. See [SECURITY.md](SECURITY.md).
+
+Two limits of the vulnerability check are worth knowing. The GitHub Advisory Database is searched by
+package name and matched on the repository URL, so an advisory filed under a different package name is
+not found, and one that cites no repository cannot be attributed: the pick then lists it under
+`unresolved_checks` instead of counting or ignoring it. Upstream CI is reported as passing only when
+every check run on the pinned commit was read (up to 300); otherwise it is reported as unknown.
 
 ## Development
 

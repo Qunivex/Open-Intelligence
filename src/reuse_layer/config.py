@@ -116,8 +116,8 @@ def inside_git_repo(path: Path) -> bool:
 @dataclass(frozen=True)
 class GitHubSettings:
     api_url: str = "https://api.github.com"
-    budget_ms: int = 2000
-    deadline_ms: int = 9000
+    budget_ms: int = 5000
+    deadline_ms: int = 30000
     max_candidates: int = 40
     deep_enrich: int = 8
     max_concurrency: int = 8
@@ -200,8 +200,8 @@ class Settings:
 
         github = GitHubSettings(
             api_url=_https_url(_str(gh, "api_url", GitHubSettings.api_url)),
-            budget_ms=_int(gh, "budget_ms", 2000, 200, 30_000),
-            deadline_ms=_int(gh, "deadline_ms", 9000, 1000, 120_000),
+            budget_ms=_int(gh, "budget_ms", 5000, 200, 30_000),
+            deadline_ms=_int(gh, "deadline_ms", 30000, 1000, 120_000),
             max_candidates=_int(gh, "max_candidates", 40, 5, 100),
             deep_enrich=_int(gh, "deep_enrich", 8, 3, 20),
             max_concurrency=_int(gh, "max_concurrency", 8, 1, 32),

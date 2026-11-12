@@ -54,6 +54,7 @@ class FakeRepo:
     capped: bool = False
     health: int = 80
     ci: str = "success"
+    ci_pages: list[str] | None = None  # one check-run conclusion per page, to exercise pagination
     signature: str = "valid"
     annotated: bool = True
     advisories: list[dict[str, Any]] = field(default_factory=list)  # global advisory DB rows
@@ -95,6 +96,9 @@ class FakeGitHub:
         self.requests: list[httpx.Request] = []
         self.fail_paths: set[str] = set()  # path substrings that return HTTP 500
         self.rate_limit_paths: set[str] = set()  # path substrings that return HTTP 429 (secondary limit)
+        self.forbid_paths: set[str] = set()  # path substrings that return a plain HTTP 403
+        self.missing_paths: set[str] = set()  # path substrings that return HTTP 404
+        self.advisory_page_size: int | None = None  # paginate /advisories with a cursor, like GitHub
 
     def add(self, *repos: FakeRepo) -> None:
         for r in repos:
@@ -112,6 +116,10 @@ class FakeGitHub:
             return httpx.Response(500, json={"message": "boom"})
         if any(f in path for f in self.rate_limit_paths):
             return httpx.Response(429, json={"message": "slow down"}, headers={"retry-after": "30"})
+        if any(f in path for f in self.forbid_paths):  # refused, and not because of a rate limit
+            return httpx.Response(403, json={"message": "Forbidden"}, headers={"x-ratelimit-remaining": "57"})
+        if any(f in path for f in self.missing_paths):
+            return httpx.Response(404, json={"message": "Not Found"})
         headers = {
             "x-ratelimit-resource": "search" if path.startswith("/search") else "core",
             "x-ratelimit-remaining": "4000",
@@ -131,6 +139,13 @@ class FakeGitHub:
                 if r.full_name.split("/")[1].lower() == affects
                 and (a.get("type") == "malware") == want_malware
             ]
+            size = self.advisory_page_size
+            if size is not None:
+                start = int(request.url.params.get("after", "0"))
+                if start + size < len(rows):
+                    # like GitHub: the next page is named by a cursor in the Link header
+                    headers["link"] = f'<https://api.github.com/advisories?after={start + size}>; rel="next"'
+                rows = rows[start : start + size]
             return httpx.Response(200, json=rows, headers=headers)
         if path.startswith("/orgs/"):
             org = path.split("/")[2].lower()
@@ -241,6 +256,15 @@ class FakeGitHub:
                 headers=headers,
             )
         m = re.match(r"^/commits/([0-9a-f]{40})/check-runs$", rest)
+        if m and r.ci_pages is not None:
+            page = int(request.url.params.get("page", "1"))
+            h = dict(headers)
+            if page < len(r.ci_pages):
+                h["link"] = (
+                    f'<https://api.github.com/repositories/1/commits/x/check-runs?page={page + 1}>; rel="next"'
+                )
+            runs = [{"status": "completed", "conclusion": r.ci_pages[page - 1]}]
+            return httpx.Response(200, json={"total_count": len(r.ci_pages), "check_runs": runs}, headers=h)
         if m:
             runs = [] if r.ci == "none" else [{"status": "completed", "conclusion": r.ci}]
             return httpx.Response(200, json={"total_count": len(runs), "check_runs": runs}, headers=headers)

@@ -17,13 +17,20 @@ Which must-have capabilities a card *covers* is decided by ``LexicalJudge``
 alone, so the answer is reproducible and no model output can turn a gap into
 coverage. Coverage is evidence found in text the repository owner wrote: it
 shows what a project says it does, not that it does it.
+
+Evidence is one statement, not a pile of words. A capability is covered when a
+single unit of the card (the repository's own name, topics and description
+taken together, or one README bullet, heading or sentence) carries the phrase,
+with the project's identity as context. The same words spread over unrelated
+README lines do not count.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
@@ -35,15 +42,9 @@ from reuse_layer.core.text import sanitize, tokens, unique
 
 log = logging.getLogger(__name__)
 
-# How strongly a term found in each card field counts.
-_FIELDS = (
-    ("name", 1.0),
-    ("topics", 1.0),
-    ("summary", 1.0),
-    ("features", 0.85),
-    ("headings", 0.75),
-    ("intro", 0.6),
-)
+# How strongly a statement counts, by where in the card it was made.
+_METADATA, _FEATURE, _HEADING, _INTRO = 1.0, 0.85, 0.75, 0.6
+_SENTENCE = re.compile(r"(?<=[.!?;:])\s+")
 
 
 @dataclass(frozen=True)
@@ -59,50 +60,92 @@ class Judgement:
     covered: tuple[str, ...]  # capabilities the card clearly covers (first phrasing of each)
     missing: tuple[str, ...]
     avoided: str | None = None
+    # For each covered capability, where its evidence is: "metadata" (the repository's name, topics
+    # or description) or "readme".
+    found_in: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Unit:
+    where: str
+    weight: float
+    words: frozenset[str]
+    pairs: frozenset[tuple[str, str]]
 
 
 class _CardIndex:
+    """A card as evidence units: text its author wrote as one statement.
+
+    A capability has to be evidenced by one statement, read in the context of what the project says
+    it is. The repository's identity (name, topics, description) is one unit; every README feature
+    bullet, heading and intro sentence is another. Words scattered over unrelated README lines
+    ("exchange rate" here, "no limits" there) therefore do not add up to "rate limiting".
+    """
+
     def __init__(self, card: Card) -> None:
-        self.weight: dict[str, float] = {}
-        self.pairs: set[tuple[str, str]] = set()
-        self.name_tokens = tokens(card.repo.split("/", 1)[1])
-        texts = {
-            "name": card.repo.split("/", 1)[1],
-            "topics": " ".join(card.topics),
-            "summary": card.summary,
-            "features": " ".join(card.features),
-            "headings": " ".join(card.headings),
-            "intro": card.intro,
-        }
-        for field, w in _FIELDS:
-            toks = tokens(texts[field])
-            for t in toks:
-                if self.weight.get(t, 0.0) < w:
-                    self.weight[t] = w
-            for a, b in pairwise(toks):
-                self.pairs.add((a, b))
-                self.pairs.add((b, a))
+        name = card.repo.split("/", 1)[1]
         # Compound names ("tokencost", "litellm") hide terms; count a term found inside the name.
-        self._name_blob = "".join(self.name_tokens)
+        self._name_blob = "".join(tokens(name))
+        self.weight: dict[str, float] = {}  # card-wide: the best place each word appears
+        self.units: list[_Unit] = []
+        self.identity = self._add("metadata", _METADATA, [name, *card.topics, card.summary])
+        for feature in card.features:
+            self._add("readme", _FEATURE, [feature])
+        for heading in card.headings:
+            self._add("readme", _HEADING, [heading])
+        for sentence in _SENTENCE.split(card.intro):
+            self._add("readme", _INTRO, [sentence])
+
+    def _add(self, where: str, weight: float, texts: Iterable[str]) -> _Unit:
+        words: set[str] = set()
+        pairs: set[tuple[str, str]] = set()
+        for text in texts:  # adjacency never spans two texts
+            toks = tokens(text)
+            words.update(toks)
+            for a, b in pairwise(toks):
+                pairs.add((a, b))
+                pairs.add((b, a))
+        unit = _Unit(where, weight, frozenset(words), frozenset(pairs))
+        if words:
+            self.units.append(unit)
+        for t in words:
+            if self.weight.get(t, 0.0) < weight:
+                self.weight[t] = weight
+        return unit
+
+    def _named(self, t: str) -> bool:
+        return t in self.identity.words or (len(t) >= 3 and t in self._name_blob)
 
     def term(self, t: str) -> float:
+        """Card-wide weight of one word: the loose signal used for the task description."""
         w = self.weight.get(t, 0.0)
         if w < 1.0 and len(t) >= 3 and t in self._name_blob:
             return 1.0
         return w
 
-    def phrase(self, toks: Sequence[str]) -> float:
-        if not toks:
-            return 0.0
-        base = sum(self.term(t) for t in toks) / len(toks)
-        if len(toks) >= 2 and base > 0:
-            adjacent = sum((a, b) in self.pairs for a, b in pairwise(toks)) / (len(toks) - 1)
-            base *= 0.85 + 0.3 * adjacent
-        return min(1.0, base)
+    def phrase(self, toks: Sequence[str]) -> tuple[float, str]:
+        """(score, where) for the one statement that best evidences the phrase.
+
+        A README statement may lean on the project's identity for context ("cost tracking" in an LLM
+        gateway is LLM cost tracking), but it has to supply at least one of the words itself.
+        """
+        best, where = 0.0, ""
+        for unit in self.units:
+            if unit.where == "readme" and not any(t in unit.words for t in toks):
+                continue
+            hits = sum(t in unit.words or self._named(t) for t in toks)
+            score = unit.weight * hits / len(toks)
+            if len(toks) >= 2 and score > 0:
+                seen = unit.pairs | self.identity.pairs
+                adjacent = sum((a, b) in seen for a, b in pairwise(toks)) / (len(toks) - 1)
+                score *= 0.85 + 0.3 * adjacent
+            if score > best:
+                best, where = min(1.0, score), unit.where
+        return best, where
 
 
 def _alternatives(capability: str) -> list[list[str]]:
-    alts = [unique(tokens(p, drop_generic=True)) for p in capability.split("|")]
+    alts = [unique(tokens(p, drop_generic=True, query=True)) for p in capability.split("|")]
     return [a for a in alts if a]
 
 
@@ -125,25 +168,30 @@ class LexicalJudge:
         idx = _CardIndex(card)
         covered: list[str] = []
         missing: list[str] = []
+        found_in: list[str] = []
         cap_scores: list[float] = []
         for cap in need.capabilities:
             alts = _alternatives(cap)
             if not alts:
                 continue
-            s = max(idx.phrase(a) for a in alts)
+            s, where = max(idx.phrase(a) for a in alts)
             cap_scores.append(s)
-            (covered if s >= self.COVERED else missing).append(label(cap))
-        task_terms = unique(tokens(need.task, drop_generic=True))[:12]
+            if s >= self.COVERED:
+                covered.append(label(cap))
+                found_in.append(where)
+            else:
+                missing.append(label(cap))
+        task_terms = unique(tokens(need.task, drop_generic=True, query=True))[:12]
         task_score = sum(idx.term(t) for t in task_terms) / len(task_terms) if task_terms else 0.0
         score = 0.65 * (sum(cap_scores) / len(cap_scores)) + 0.35 * task_score if cap_scores else task_score
         avoided = None
         for phrase in need.avoid:
-            toks = unique(tokens(phrase))
-            if toks and idx.phrase(toks) >= 0.85:
+            toks = unique(tokens(phrase, query=True))
+            if toks and idx.phrase(toks)[0] >= 0.85:
                 score *= 0.4
                 avoided = phrase
                 break
-        return Judgement(round(min(1.0, score), 3), tuple(covered), tuple(missing), avoided)
+        return Judgement(round(min(1.0, score), 3), tuple(covered), tuple(missing), avoided, tuple(found_in))
 
 
 SYSTEM_PROMPT = """\

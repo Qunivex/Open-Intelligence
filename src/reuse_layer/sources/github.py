@@ -25,7 +25,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 
@@ -117,7 +117,7 @@ class GitHubClient:
         *,
         token: Secret | None,
         api_url: str = "https://api.github.com",
-        budget_ms: int = 2000,
+        budget_ms: int = 5000,
         store: Store | None = None,
         max_concurrency: int = 8,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -229,9 +229,12 @@ class GitHubClient:
             raise RateLimited(
                 "GitHub rate limit reached" + ("" if self.authenticated else " (no token configured)")
             )
-        if status in (204, 404, 409, 410, 451) or (status == 403 and resource == "core"):
+        if status in (204, 404, 409, 410, 451):
             log.debug("GitHub API response: GET %s status=%d result=unavailable", path, status)
-            # Not found, empty, gone, blocked, or forbidden for this resource: cache briefly as a miss.
+            # Not found, empty, gone or legally blocked: cached as a miss for the caller's TTL.
+            # A 403 that is not a rate limit is deliberately not here. "Forbidden" is not "absent":
+            # it falls through to the error below, so a refused check is never read (or cached) as an
+            # empty answer. GitHub does send such 403s, e.g. for the contributor list of a huge repo.
             if self._store is not None:
                 self._store.cache_put(key, 404, None, "null", None)
             return None
@@ -460,6 +463,31 @@ class GitHubSource:
         res = await self.client.get(self._path(full), ttl=6 * HOUR)
         return repo_from_json(res.data) if res is not None else None
 
+    async def _list(
+        self, path: str, params: Mapping[str, str | int], *, ttl: int, max_pages: int = 5
+    ) -> list[Any] | None:
+        """Every item of a list endpoint, or None when the list could not be read to its end.
+
+        None covers an unavailable endpoint and a list longer than ``max_pages``. Callers that use the
+        list as a security check must treat None as "not checked": the first page of a longer list is
+        not the list. Pages are followed through the ``Link`` header, so page-numbered and
+        cursor-paginated endpoints both work.
+        """
+        items: list[Any] = []
+        query: Mapping[str, str | int] = params
+        for _ in range(max_pages):
+            res = await self.client.get(path, params=query, ttl=ttl)
+            if res is None or not isinstance(res.data, list):
+                return None
+            items += res.data
+            if not res.has_next:
+                return items
+            following = _next_query(res.link)
+            if not following:
+                return None
+            query = {**params, **following}
+        return None
+
     async def enrich(self, repo: Repo) -> DeepFacts:
         facts = DeepFacts()
         fn = repo.full_name
@@ -481,16 +509,13 @@ class GitHubSource:
                 self._path(fn, "contributors"), params={"per_page": 100}, ttl=DAY
             ),
             "community": self.client.get(self._path(fn, "community", "profile"), ttl=DAY),
-            "repo_advisories": self.client.get(
-                self._path(fn, "security-advisories"),
-                params={"state": "published", "per_page": 50},
-                ttl=6 * HOUR,
+            # The three advisory sources are read to their last page: see `_list`.
+            "repo_advisories": self._list(
+                self._path(fn, "security-advisories"), {"state": "published", "per_page": 100}, ttl=6 * HOUR
             ),
-            "advisories": self.client.get(
-                "/advisories", params={"affects": repo.name, "per_page": 100}, ttl=6 * HOUR
-            ),
-            "malware": self.client.get(
-                "/advisories", params={"affects": repo.name, "type": "malware", "per_page": 100}, ttl=6 * HOUR
+            "advisories": self._list("/advisories", {"affects": repo.name, "per_page": 100}, ttl=6 * HOUR),
+            "malware": self._list(
+                "/advisories", {"affects": repo.name, "type": "malware", "per_page": 100}, ttl=6 * HOUR
             ),
         }
         if repo.owner_type == "Organization":
@@ -567,7 +592,13 @@ class GitHubSource:
             )
 
         if ref is not None:
-            return await self._pin_tag(repo, ref, kind, facts)
+            try:
+                return await self._pin_tag(repo, ref, kind, facts)
+            except GitHubError as exc:
+                # Only the pin is lost (the provenance gate then fails closed); the rest of the
+                # evidence already gathered for this repository is kept.
+                facts.errors.append(f"pin: {exc}")
+                return None
         if not isinstance(branch_commit, dict):
             facts.errors.append("pin: default branch head could not be resolved")
             return None
@@ -631,25 +662,40 @@ class GitHubSource:
         return _signature(c.data.get("verification") or {}), committed_at
 
     async def _ci(self, repo: Repo, sha: str, facts: DeepFacts) -> CiState:
+        path = self._path(repo.full_name, "commits", sha, "check-runs")
+        runs: list[dict[str, Any]] = []
+        query: Mapping[str, str | int] = {"per_page": 100}
+        total: Any = None
+        read_all = False
         try:
-            res = await self.client.get(
-                self._path(repo.full_name, "commits", sha, "check-runs"),
-                params={"per_page": 50},
-                ttl=6 * HOUR,
-            )
+            for _ in range(3):  # up to 300 check runs; large projects have more than one page
+                res = await self.client.get(path, params=query, ttl=6 * HOUR)
+                if res is None or not isinstance(res.data, dict):
+                    return "unknown"
+                runs += [r for r in res.data.get("check_runs") or [] if isinstance(r, dict)]
+                total = res.data.get("total_count")
+                following = _next_query(res.link) if res.has_next else None
+                if not following:
+                    read_all = not res.has_next
+                    break
+                query = {"per_page": 100, **following}
         except GitHubError as exc:
             facts.errors.append(f"checks: {exc}")
             return "unknown"
-        if res is None or not isinstance(res.data, dict):
-            return "unknown"
-        runs = [r for r in res.data.get("check_runs") or [] if isinstance(r, dict)]
+        if isinstance(total, int) and total > len(runs):
+            read_all = False
         if not runs:
             return "none"
         conclusions = [r.get("conclusion") for r in runs]
+        # A failure or an unfinished run among those read is a fact whatever the rest say...
         if any(c in ("failure", "timed_out", "startup_failure", "action_required") for c in conclusions):
             return "failing"
         if any(r.get("status") != "completed" for r in runs):
             return "pending"
+        # ...but "passing" is a claim about all of them, so it needs all of them.
+        if not read_all:
+            facts.errors.append("check runs: more than were read")
+            return "unknown"
         if all(c in ("success", "neutral", "skipped") for c in conclusions):
             return "passing"
         return "unknown"
@@ -661,6 +707,17 @@ class GitHubSource:
 
 
 _FAILED = object()
+_NEXT_LINK = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+
+
+def _next_query(link: str | None) -> dict[str, str]:
+    """Query parameters of the ``rel="next"`` page in a Link header (empty when there is none).
+
+    Only the parameters are taken. The request still goes to the path the caller chose on the
+    configured API host, so a Link header can never steer the token anywhere else.
+    """
+    m = _NEXT_LINK.search(link or "")
+    return dict(parse_qsl(urlsplit(m.group(1)).query)) if m else {}
 
 
 def _signature(verification: Mapping[str, Any]) -> str:
@@ -700,24 +757,33 @@ def _contributors(res: Any, facts: DeepFacts) -> None:
 
 def _advisories(repo: Repo, got: dict[str, Any], facts: DeepFacts) -> None:
     sources = (got["repo_advisories"], got["advisories"], got["malware"])
-    facts.advisories_checked = all(s is not _FAILED for s in sources)
+    # Checked means every source answered with a list that was read to its end. A failed request, an
+    # endpoint that was unavailable and a list too long to finish are all "not checked": none of them
+    # is evidence of "no advisories". What the sources that did answer returned is still used below.
+    facts.advisories_checked = all(isinstance(s, list) for s in sources)
     me = repo_url_key(repo.html_url)
     seen: set[str] = set()
 
     repo_adv = got["repo_advisories"]
-    for a in repo_adv.data if isinstance(repo_adv, GHResponse) and isinstance(repo_adv.data, list) else []:
+    for a in repo_adv if isinstance(repo_adv, list) else []:
         if not isinstance(a, dict) or a.get("withdrawn_at") or a.get("state") not in (None, "published"):
             continue
         vulns = [v for v in a.get("vulnerabilities") or [] if isinstance(v, dict)]
         patched = None if not vulns else all(bool(v.get("patched_versions")) for v in vulns)
         _add(facts, seen, a, patched, malware=False, source="repository")
 
+    unattributed: set[str] = set()
     for key, malware in (("advisories", False), ("malware", True)):
         res = got[key]
-        for a in res.data if isinstance(res, GHResponse) and isinstance(res.data, list) else []:
+        for a in res if isinstance(res, list) else []:
             if not isinstance(a, dict) or a.get("withdrawn_at"):
                 continue
-            if repo_url_key(a.get("source_code_location")) != me:
+            where = repo_url_key(a.get("source_code_location"))
+            if where is None and isinstance(a.get("ghsa_id"), str):
+                # A package with this repository's name has an advisory that names no repository.
+                # It cannot be pinned on this project, and it cannot be ruled out either.
+                unattributed.add(a["ghsa_id"])
+            if where != me:
                 continue  # an advisory for a different project with the same package name
             vulns = [v for v in a.get("vulnerabilities") or [] if isinstance(v, dict)]
             patched = None if not vulns else all(bool(v.get("first_patched_version")) for v in vulns)
@@ -729,6 +795,7 @@ def _advisories(repo: Repo, got: dict[str, Any], facts: DeepFacts) -> None:
                 malware=malware or a.get("type") == "malware",
                 source="github-advisory-database",
             )
+    facts.advisories_unattributed = len(unattributed - seen)
 
 
 def _add(

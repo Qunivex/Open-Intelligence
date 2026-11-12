@@ -9,7 +9,7 @@ from typing import Any
 from mcp import Client
 
 from conftest import FakeGitHub, run
-from reuse_layer.adapters.mcp_server import build_server, discovery_workflow
+from reuse_layer.adapters.mcp_server import build_server, discovery_workflow, parent_discovery_workflow
 from reuse_layer.core.engine import Engine
 
 SECRETISH = ("key", "token", "secret", "password", "credential", "auth")
@@ -28,7 +28,7 @@ def test_tool_set_and_schemas_have_no_secret_fields(
             return (await client.list_tools()).tools
 
     tools = run(go())
-    assert {t.name for t in tools} == {"find_reusable", "search_github", "report_outcome"}
+    assert {t.name for t in tools} == {"list_providers", "find_reusable", "search_github", "report_outcome"}
 
     def walk(schema: Any) -> None:
         if isinstance(schema, dict):
@@ -103,11 +103,32 @@ def test_discovery_prompt(world: FakeGitHub, make_engine: Callable[..., Engine])
             got = await client.get_prompt(
                 "discover_github_projects", {"need": "a pricing model for LLM providers"}
             )
-            return prompts, got
+            parent = await client.get_prompt(
+                "discover_reusable_assets", {"need": "a speech recognition model and evaluation data"}
+            )
+            return prompts, got, parent
 
-    prompts, got = run(go())
-    assert [p.name for p in prompts] == ["discover_github_projects"]
+    prompts, got, parent = run(go())
+    assert {p.name for p in prompts} == {"discover_github_projects", "discover_reusable_assets"}
     text = got.messages[0].content.text
     assert "Why not keywords" in text and "a pricing model for LLM providers" in text
     assert not discovery_workflow().startswith("---")
     assert "user-visible **discovery trace**" in text
+    parent_text = parent.messages[0].content.text
+    assert "list_providers" in parent_text and "speech recognition model" in parent_text
+    assert not parent_discovery_workflow().startswith("---")
+
+
+def test_provider_registry_tool(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
+    async def go() -> Any:
+        async with Client(_server(world, make_engine)) as client:
+            return await client.call_tool("list_providers", {})
+
+    res = run(go())
+    data = json.loads(res.content[0].text)
+    providers = {provider["id"]: provider for provider in data["providers"]}
+    assert data["schema_version"] == 1
+    assert providers["github"]["status"] == "available"
+    assert "find_reusable" in providers["github"]["tools"]
+    assert providers["huggingface"]["status"] == "planned"
+    assert providers["huggingface"]["tools"] == []

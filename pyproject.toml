@@ -54,7 +54,7 @@ path = "src/reuse_layer/__init__.py"
 packages = ["src/reuse_layer"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/reuse_layer", "tests", "README.md", "LICENSE", "SECURITY.md"]
+include = ["src/reuse_layer", "tests", "docs/architecture.md", "README.md", "LICENSE", "SECURITY.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

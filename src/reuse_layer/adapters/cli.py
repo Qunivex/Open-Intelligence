@@ -35,7 +35,7 @@ from reuse_layer.config import (
     write_template,
 )
 
-SKILL = "github-oss-discovery"
+SKILLS = ("reuse-discovery", "github-oss-discovery")
 _WRITE_SCOPES = {
     "repo",
     "public_repo",
@@ -325,16 +325,27 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_install_skill(args: argparse.Namespace) -> int:
-    src = resources.files("reuse_layer.integrations").joinpath("skills", SKILL, "SKILL.md")
     base = Path(args.project).expanduser().resolve() / ".claude" if args.project else Path.home() / ".claude"
-    dest = base / "skills" / SKILL / "SKILL.md"
-    if dest.exists() and not args.force:
-        print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
+    skills = [
+        (
+            name,
+            resources.files("reuse_layer.integrations").joinpath("skills", name, "SKILL.md"),
+            base / "skills" / name / "SKILL.md",
+        )
+        for name in SKILLS
+    ]
+    existing = [dest for _, _, dest in skills if dest.exists()]
+    if existing and not args.force:
+        print(
+            f"{', '.join(str(path) for path in existing)} exists; pass --force to overwrite",
+            file=sys.stderr,
+        )
         return 1
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with resources.as_file(src) as s:
-        shutil.copyfile(s, dest)
-    print(f"Installed the discovery skill at {dest}")
+    for _, src, dest in skills:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with resources.as_file(src) as source:
+            shutil.copyfile(source, dest)
+        print(f"Installed discovery skill at {dest}")
     exe = Path(sys.executable)
     print("\nRegister the MCP server with Claude Code (once):")
     print(f'  claude mcp add reuse-layer --scope user -- "{exe}" -m reuse_layer mcp')
@@ -392,7 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--per-query", type=int, default=8)
     s.set_defaults(fn=cmd_search)
 
-    i = sub.add_parser("install-skill", help="install the discovery skill for Claude Code")
+    i = sub.add_parser("install-skill", help="install the parent and GitHub discovery skills")
     i.add_argument("--project", help="install into this project's .claude/skills instead of ~/.claude/skills")
     i.add_argument("--force", action="store_true")
     i.set_defaults(fn=cmd_install_skill)

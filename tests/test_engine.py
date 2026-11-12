@@ -95,6 +95,7 @@ def test_at_most_one_newer_project_takes_the_explore_slot(
 
 def test_response_is_compact(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
     out = run(make_engine(world).find_reusable(PRICING))
+    assert all("normalized" not in pick for pick in out["picks"])
     # ~1,500 tokens is roughly 6,000 characters of compact JSON
     assert len(compact_json(out)) < 6500
 

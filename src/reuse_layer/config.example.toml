@@ -18,7 +18,7 @@
 # The layer only reads public data and warns if a token can write.
 #
 # Pick ONE of these forms:
-github = ""                                   # paste the token here, or
+github = ""                  # paste the token here, or
 # github = { env = "REUSE_LAYER_GITHUB_TOKEN" }  # read it from an environment variable, or
 # github = { keyring = "reuse-layer" }           # read it from the OS keychain (pip install "reuse-layer[keyring]";
 #                                                #   store it with: reuse-layer keys set github)
@@ -33,13 +33,13 @@ anthropic = ""
 
 [github]
 api_url = "https://api.github.com"
-budget_ms = 2000          # time budget for each GitHub call; slow calls are skipped, not waited on
-deadline_ms = 9000        # overall budget for one find_reusable call; candidates still unchecked at the
+budget_ms = 5000          # per-request timeout; this is an app setting, not a GitHub API limit
+deadline_ms = 30000       # overall budget for one find_reusable call; candidates still unchecked at the
                           #   deadline are reported as unchecked (never as failed, never as picks)
-max_candidates = 40       # pool cap before gates
+max_candidates = 40       # app pool cap before gates; not a GitHub per_page limit
 deep_enrich = 8           # candidates that get the full evidence pass (README, releases, advisories, CI);
                           #   matches beyond it are counted in evidence.not_examined
-max_concurrency = 8
+max_concurrency = 8       # app cap; GitHub's 100-request concurrency limit is shared across clients
 
 [ranking]
 # score = gate * (relevance*a + trust*b + preference*c + verified*d + tier*e) + explore
