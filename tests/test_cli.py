@@ -18,14 +18,13 @@ def test_find_output_shows_pinned_ref_freshness(capsys: Any) -> None:
                     "scores": {"total": 0.8},
                     "summary": "Example project",
                     "why": [],
-                    "pin": {"ref": "v1.0.0"},
+                    "version": "v1.0.0",
                     "ref_freshness": {
                         "pinned_commit_at": "2026-01-01T00:00:00+00:00",
                         "default_branch": "main",
                         "default_branch_commit_at": "2026-02-01T00:00:00+00:00",
                         "default_branch_is_newer": True,
                         "default_branch_ahead_days": 31.0,
-                        "default_branch_ahead_minutes": 44640.0,
                     },
                     "get": "git clone example",
                 }
@@ -54,14 +53,13 @@ def test_find_output_shows_small_freshness_difference_in_minutes(capsys: Any) ->
                     "scores": {"total": 0.8},
                     "summary": "Example project",
                     "why": [],
-                    "pin": {"ref": "v1.0.0"},
+                    "version": "v1.0.0",
                     "ref_freshness": {
                         "pinned_commit_at": "2026-01-01T00:00:00+00:00",
                         "default_branch": "main",
                         "default_branch_commit_at": "2026-01-01T00:23:24+00:00",
                         "default_branch_is_newer": True,
                         "default_branch_ahead_days": 0.016,
-                        "default_branch_ahead_minutes": 23.4,
                     },
                     "get": "git clone example",
                 }
@@ -73,15 +71,17 @@ def test_find_output_shows_small_freshness_difference_in_minutes(capsys: Any) ->
         }
     )
 
-    assert "main is newer than pinned v1.0.0 by 23.4 minutes" in capsys.readouterr().out
+    assert "main is newer than pinned v1.0.0 by 23 minutes" in capsys.readouterr().out
 
 
-def test_install_skill_installs_parent_and_github_skills(tmp_path: Any, capsys: Any) -> None:
+def test_install_skill_installs_the_one_skill_and_flags_a_retired_one(tmp_path: Any, capsys: Any) -> None:
+    skills = tmp_path / ".claude" / "skills"
+    (skills / "github-oss-discovery").mkdir(parents=True)
+
     assert main(["install-skill", "--project", str(tmp_path)]) == 0
 
-    skills = tmp_path / ".claude" / "skills"
-    parent = skills / "reuse-discovery" / "SKILL.md"
-    github = skills / "github-oss-discovery" / "SKILL.md"
-    assert parent.exists() and "list_providers" in parent.read_text(encoding="utf-8")
-    assert github.exists() and "find_reusable" in github.read_text(encoding="utf-8")
-    assert "Register the MCP server" in capsys.readouterr().out
+    skill = skills / "reuse-discovery" / "SKILL.md"
+    assert skill.exists() and "find_reusable" in skill.read_text(encoding="utf-8")
+    assert sorted(p.name for p in skills.iterdir()) == ["github-oss-discovery", "reuse-discovery"]
+    out = capsys.readouterr().out
+    assert "Register the MCP server" in out and "Remove the retired skill" in out

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -11,10 +11,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 LicensePolicy = Literal["permissive", "weak_copyleft", "any_osi"]
 Outcome = Literal["kept", "replaced", "removed", "tests_passed", "tests_failed"]
 CiState = Literal["passing", "failing", "pending", "none", "unknown"]
+# What can be searched for. One source adapter serves each type (see ``sources/base.py``); adding
+# an adapter adds its type here, which is how callers learn that it exists.
+ArtifactType = Literal["repository"]
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def recent(dt: datetime | None, days: int, now: datetime | None = None) -> bool:
+    return dt is not None and (now or utcnow()) - dt <= timedelta(days=days)
 
 
 # --------------------------------------------------------------------------- requests (validated input)
@@ -63,7 +70,7 @@ class FindRequest(BaseModel):
     search_queries: list[Query] = Field(default_factory=list, max_length=6)
     avoid: list[Phrase] = Field(default_factory=list, max_length=8)
     context: CallerContext = Field(default_factory=CallerContext)
-    include_normalized: bool = False
+    artifact_type: ArtifactType = "repository"
 
 
 class OutcomeReport(BaseModel):
@@ -98,7 +105,6 @@ class Repo:
     owner_type: str  # "User" | "Organization"
     stars: int
     forks: int
-    open_issues: int
     homepage: str | None = None
 
     @property
@@ -126,7 +132,6 @@ class Advisory:
     summary: str
     patched: bool | None  # True: a fixed version exists; False: none; None: unknown
     malware: bool = False
-    source: str = "repository"  # repository | github-advisory-database
 
 
 @dataclass(frozen=True)
@@ -211,6 +216,7 @@ class Scored:
     newer: bool = False
     probation: bool = False
     risks: list[str] = field(default_factory=list)
+    unresolved_checks: list[str] = field(default_factory=list)  # unknown even though it passed
     total: float = 0.0
     explore: bool = False
 

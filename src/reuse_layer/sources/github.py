@@ -21,19 +21,33 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 
 from reuse_layer import __version__
-from reuse_layer.config import Secret
-from reuse_layer.core.models import Advisory, CiState, DeepFacts, Pin, Release, Repo, utcnow
+from reuse_layer.config import Secret, Settings
+from reuse_layer.core import gates, licenses, signals
+from reuse_layer.core.cards import build_card
+from reuse_layer.core.discovery import fallback_queries, sanitize_query
+from reuse_layer.core.models import (
+    Advisory,
+    Card,
+    CiState,
+    DeepFacts,
+    GateResult,
+    Pin,
+    Release,
+    Repo,
+    Scored,
+)
 from reuse_layer.core.store import CachedResponse, Store
 from reuse_layer.core.text import sanitize
+from reuse_layer.sources.base import RateLimited, SourceError
 
 log = logging.getLogger(__name__)
 
@@ -51,12 +65,15 @@ _LOG_SECRET = re.compile(
 HOUR = 3600
 DAY = 86400
 
+NOT_CONNECTED = (
+    "GitHub is not connected, so only 60 requests/hour are available and results may be partial. "
+    "Ask the user to add a GitHub token to the Reuse Layer config file (`reuse-layer config path` shows where); "
+    "never ask for the token in chat."
+)
+_SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,99}$")
 
-class RateLimited(Exception):
-    """GitHub asked us to stop (primary or secondary rate limit)."""
 
-
-class GitHubError(Exception):
+class GitHubError(SourceError):
     """GitHub answered with an unexpected error."""
 
 
@@ -95,7 +112,6 @@ class GHResponse:
     status: int
     data: Any
     link: str | None
-    from_cache: bool
 
     @property
     def has_next(self) -> bool:
@@ -128,8 +144,6 @@ class GitHubClient:
         self._sem = asyncio.Semaphore(max_concurrency)
         self._search_times: deque[float] = deque()
         self.rate = RateState(remaining={}, reset_at={})
-        self.calls = 0
-        self.cache_hits = 0
         self._client = httpx.AsyncClient(
             base_url=api_url,
             transport=transport,
@@ -161,7 +175,6 @@ class GitHubClient:
         key = f"GET {path}?{urlencode(sorted((params or {}).items()))} {accept}"
         cached = self._store.cache_get(key) if self._store else None
         if cached is not None and time.time() - cached.fetched_at < ttl:
-            self.cache_hits += 1
             log.debug(
                 "GitHub API cache hit: GET %s params=%s (%s)",
                 path,
@@ -185,7 +198,6 @@ class GitHubClient:
         request_started = time.monotonic()
         for _ in range(3):  # follow at most two same-host redirects (renamed or transferred repos)
             async with self._sem:
-                self.calls += 1
                 try:
                     resp = await self._client.get(url, params=None if "?" in url else params, headers=headers)
                 except httpx.TimeoutException as exc:
@@ -217,7 +229,6 @@ class GitHubClient:
         status = resp.status_code
         if status == 304 and cached is not None and self._store is not None:
             self._store.cache_touch(key)
-            self.cache_hits += 1
             log.debug(
                 "GitHub API response: GET %s status=304 cache=validated elapsed_ms=%d",
                 path,
@@ -271,13 +282,13 @@ class GitHubClient:
             int((time.monotonic() - request_started) * 1000),
             _response_shape(data),
         )
-        return GHResponse(status=status, data=data, link=link, from_cache=False)
+        return GHResponse(status=status, data=data, link=link)
 
     @staticmethod
     def _from_cache(c: CachedResponse) -> GHResponse | None:
         if c.status == 404:
             return None
-        return GHResponse(status=c.status, data=json.loads(c.body), link=c.link, from_cache=True)
+        return GHResponse(status=c.status, data=json.loads(c.body), link=c.link)
 
     def _note_rate(self, resp: httpx.Response) -> None:
         res = resp.headers.get("x-ratelimit-resource")
@@ -403,7 +414,6 @@ def repo_from_json(d: Any) -> Repo | None:
         owner_type=str(owner.get("type") or "User"),
         stars=_int(d.get("stargazers_count")),
         forks=_int(d.get("forks_count")),
-        open_issues=_int(d.get("open_issues_count")),
         homepage=sanitize(homepage, 200)
         if isinstance(homepage, str) and homepage.startswith("https://")
         else None,
@@ -425,15 +435,152 @@ def version_key(tag: str) -> tuple[int, int, int] | None:
 
 
 class GitHubSource:
-    """The only source in v1. GitHub is an open host (design tier 3): candidates
-    earn trust from evidence and owner curation, never from being on GitHub."""
+    """Public GitHub repositories, as a :class:`reuse_layer.sources.base.Source`.
 
-    name = "github"
-    kinds = frozenset({"project"})
-    tier: Literal[3] = 3
+    GitHub is an open host where anyone can publish: candidates earn trust from evidence and owner
+    curation, never from being on GitHub.
+    """
 
-    def __init__(self, client: GitHubClient) -> None:
+    id = "github"
+    name = "GitHub"
+    artifact_type = "repository"
+
+    def __init__(
+        self,
+        client: GitHubClient,
+        *,
+        curated_owners: frozenset[str] | None = None,
+        newer_than_days: int = 180,
+    ) -> None:
         self.client = client
+        self._curated = signals.registry_curated_owners() if curated_owners is None else curated_owners
+        self._newer_than_days = newer_than_days
+
+    @classmethod
+    def from_settings(cls, settings: Settings, client: GitHubClient) -> GitHubSource:
+        return cls(
+            client,
+            curated_owners=signals.registry_curated_owners() | frozenset(settings.curated_owners),
+            newer_than_days=settings.ranking.newer_than_days,
+        )
+
+    # ------------------------------------------------------------------ connection
+
+    @property
+    def authenticated(self) -> bool:
+        return self.client.authenticated
+
+    def connection_note(self) -> str | None:
+        return None if self.authenticated else NOT_CONNECTED
+
+    def rate_limit_note(self) -> str:
+        hint = "" if self.authenticated else " Adding a token raises the limit to 5,000/hour."
+        return f"GitHub rate limit reached; results are partial.{hint}"
+
+    async def aclose(self) -> None:
+        await self.client.aclose()
+
+    # ------------------------------------------------------------------ discovery
+
+    def parse_ref(self, ref: str) -> str | None:
+        return parse_repo_ref(ref)
+
+    def clean_query(self, raw: str) -> str | None:
+        return sanitize_query(raw)
+
+    def fallback_queries(self, task: str, capabilities: list[str], language: str | None) -> list[str]:
+        return fallback_queries(task, capabilities, language)
+
+    def brief(self, repo: Repo, now: datetime) -> dict[str, Any]:
+        flags = [
+            f
+            for f, on in (("archived", repo.archived), ("fork", repo.fork), ("template", repo.is_template))
+            if on
+        ]
+        out: dict[str, Any] = {
+            "name": repo.full_name,
+            "about": sanitize(repo.description, 140),
+            "topics": list(repo.topics[:6]),
+            "lang": repo.language,
+            "license": repo.license_spdx,
+            "pushed": repo.pushed_at.date().isoformat() if repo.pushed_at else None,
+            "age_days": repo.age_days(now),
+            "stars": repo.stars,
+        }
+        if flags:
+            out["flags"] = flags
+        return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+    # ------------------------------------------------------------------ checks and scoring inputs
+
+    def metadata_gates(self, repo: Repo, policy: gates.GatePolicy, now: datetime) -> list[GateResult]:
+        return gates.metadata_gates(repo, policy, now)
+
+    def card(self, repo: Repo, deep: DeepFacts | None) -> Card:
+        return build_card(repo, deep.readme if deep else None)
+
+    def evidence_gates(
+        self, shortlist: Sequence[Scored], pool: Sequence[Scored], policy: gates.GatePolicy, now: datetime
+    ) -> None:
+        imitates = signals.lookalikes(pool)
+        for s in shortlist:
+            s.gates += gates.evidence_gates(s, policy, imitates.get(s.repo.full_name), now)
+
+    def assess(self, s: Scored, now: datetime) -> None:
+        deep = s.deep
+        assert deep is not None  # the engine assesses enriched candidates only
+        s.trust, s.trust_detail, risks = signals.trust(s.repo, deep, now)
+        s.risks.extend(risks)
+        s.tier, s.tier_score, s.tier_detail = signals.tier(s.repo, deep, self._curated)
+        s.verified, s.verified_detail = signals.verified(deep)
+        if deep.ci == "failing":
+            s.risks.append("Upstream CI is failing on the pinned commit")
+        s.newer = signals.is_newer(s.repo, self._newer_than_days, now)
+        if signals.sudden_riser(s.repo, deep, now):
+            s.probation = True
+            s.risks.append("Star count rose unusually fast for its age; held in probation")
+        elif s.newer:
+            s.risks.append(f"Newer project ({s.repo.age_days(now)} days old): limited track record")
+        if s.repo.language is None:
+            s.risks.append("No primary language detected: it may be data or docs, not a library")
+        family = licenses.family(s.repo.license_spdx)
+        if family.endswith("copyleft"):  # allowed by the caller's policy, but it carries obligations
+            s.risks.append(f"{s.repo.license_spdx} is {family}: check its obligations before shipping")
+        s.unresolved_checks = gates.unresolved_checks(s)
+
+    def pick_details(self, s: Scored) -> dict[str, Any]:
+        deep = s.deep
+        assert deep is not None
+        pin = deep.pin
+        assert pin is not None  # the provenance gate guarantees a pin
+        url = s.repo.html_url
+        branch_time = deep.default_branch_commit_at
+        ahead = (
+            (branch_time - pin.committed_at).total_seconds() / 86400
+            if branch_time and pin.committed_at
+            else None
+        )
+        out: dict[str, Any] = {
+            "ref_freshness": {
+                "pinned_commit_at": pin.committed_at.isoformat() if pin.committed_at else None,
+                "default_branch": s.repo.default_branch,
+                "default_branch_commit_at": branch_time.isoformat() if branch_time else None,
+                "default_branch_is_newer": ahead > 0 if ahead is not None else None,
+                "default_branch_ahead_days": round(max(0.0, ahead), 3) if ahead is not None else None,
+            },
+            "owner_tier": s.tier,
+        }
+        if _SAFE_REF.match(pin.ref) and pin.kind != "branch":
+            out["get"] = (
+                f"git clone --depth 1 --branch {pin.ref} {url}.git  # then check HEAD is {pin.sha[:12]}"
+            )
+        else:
+            out["get"] = f"git clone {url}.git && git -C {s.repo.name} checkout {pin.sha}"
+        if s.repo.homepage:
+            out["docs"] = s.repo.homepage
+        return out
+
+    # ------------------------------------------------------------------ GitHub REST calls
 
     @staticmethod
     def _path(full_name: str, *rest: str) -> str:
@@ -700,11 +847,6 @@ class GitHubSource:
             return "passing"
         return "unknown"
 
-    async def rate_limit(self) -> dict[str, Any] | None:
-        """Current limits (does not count against them). Used by `reuse-layer doctor`."""
-        res = await self.client.get("/rate_limit", ttl=0)
-        return res.data if res is not None and isinstance(res.data, dict) else None
-
 
 _FAILED = object()
 _NEXT_LINK = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
@@ -770,7 +912,7 @@ def _advisories(repo: Repo, got: dict[str, Any], facts: DeepFacts) -> None:
             continue
         vulns = [v for v in a.get("vulnerabilities") or [] if isinstance(v, dict)]
         patched = None if not vulns else all(bool(v.get("patched_versions")) for v in vulns)
-        _add(facts, seen, a, patched, malware=False, source="repository")
+        _add(facts, seen, a, patched, malware=False)
 
     unattributed: set[str] = set()
     for key, malware in (("advisories", False), ("malware", True)):
@@ -793,14 +935,11 @@ def _advisories(repo: Repo, got: dict[str, Any], facts: DeepFacts) -> None:
                 a,
                 patched,
                 malware=malware or a.get("type") == "malware",
-                source="github-advisory-database",
             )
     facts.advisories_unattributed = len(unattributed - seen)
 
 
-def _add(
-    facts: DeepFacts, seen: set[str], a: dict[str, Any], patched: bool | None, *, malware: bool, source: str
-) -> None:
+def _add(facts: DeepFacts, seen: set[str], a: dict[str, Any], patched: bool | None, *, malware: bool) -> None:
     ghsa = a.get("ghsa_id")
     if not isinstance(ghsa, str) or ghsa in seen:
         return
@@ -813,10 +952,5 @@ def _add(
             summary=sanitize(a.get("summary"), 160),
             patched=patched,
             malware=malware,
-            source=source,
         )
     )
-
-
-def recent(dt: datetime | None, days: int, now: datetime | None = None) -> bool:
-    return dt is not None and (now or utcnow()) - dt <= timedelta(days=days)

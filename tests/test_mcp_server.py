@@ -9,7 +9,7 @@ from typing import Any
 from mcp import Client
 
 from conftest import FakeGitHub, run
-from reuse_layer.adapters.mcp_server import build_server, discovery_workflow, parent_discovery_workflow
+from reuse_layer.adapters.mcp_server import build_server, discovery_workflow
 from reuse_layer.core.engine import Engine
 
 SECRETISH = ("key", "token", "secret", "password", "credential", "auth")
@@ -28,7 +28,7 @@ def test_tool_set_and_schemas_have_no_secret_fields(
             return (await client.list_tools()).tools
 
     tools = run(go())
-    assert {t.name for t in tools} == {"list_providers", "find_reusable", "search_github", "report_outcome"}
+    assert {t.name for t in tools} == {"find_reusable", "search", "report_outcome"}
 
     def walk(schema: Any) -> None:
         if isinstance(schema, dict):
@@ -45,6 +45,12 @@ def test_tool_set_and_schemas_have_no_secret_fields(
         walk(t.input_schema)
     find = next(t for t in tools if t.name == "find_reusable")
     assert find.annotations.read_only_hint is True
+    # The schema is the registry: an artifact type is offered exactly when a source serves it.
+    engine = make_engine(world)
+    for t in tools:
+        if t.name != "report_outcome":
+            prop = t.input_schema["properties"]["artifact_type"]
+            assert prop.get("enum", [prop.get("const")]) == sorted(engine.sources)
 
 
 def test_find_reusable_round_trip(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
@@ -64,7 +70,10 @@ def test_find_reusable_round_trip(world: FakeGitHub, make_engine: Callable[..., 
     res = run(go())
     data = json.loads(res.content[0].text)
     assert data["verdict"] == "reuse"
-    assert data["picks"][0]["repo"].endswith("AgentOps-AI/tokencost")
+    top = data["picks"][0]
+    assert top["name"] == "AgentOps-AI/tokencost"
+    assert (top["provider"], top["artifact_type"]) == ("github", "repository")
+    assert (data["provider"], data["artifact_type"]) == ("github", "repository")
     assert data["unresolved"] == ["not-a/real-repo"]
 
 
@@ -89,7 +98,7 @@ def test_internal_errors_do_not_leak(world: FakeGitHub, make_engine: Callable[..
 
     async def go() -> Any:
         async with Client(build_server(lambda: engine)) as client:
-            return await client.call_tool("search_github", {"queries": ["llm"]})
+            return await client.call_tool("search", {"queries": ["llm"]})
 
     res = run(go())
     assert getattr(res, "is_error", getattr(res, "isError", False))
@@ -100,35 +109,23 @@ def test_discovery_prompt(world: FakeGitHub, make_engine: Callable[..., Engine])
     async def go() -> Any:
         async with Client(_server(world, make_engine)) as client:
             prompts = (await client.list_prompts()).prompts
-            got = await client.get_prompt(
-                "discover_github_projects", {"need": "a pricing model for LLM providers"}
-            )
-            parent = await client.get_prompt(
-                "discover_reusable_assets", {"need": "a speech recognition model and evaluation data"}
-            )
-            return prompts, got, parent
+            got = await client.get_prompt("discover_reusable", {"need": "a pricing model for LLM providers"})
+            return prompts, got
 
-    prompts, got, parent = run(go())
-    assert {p.name for p in prompts} == {"discover_github_projects", "discover_reusable_assets"}
+    prompts, got = run(go())
+    assert {p.name for p in prompts} == {"discover_reusable"}
     text = got.messages[0].content.text
     assert "Why not keywords" in text and "a pricing model for LLM providers" in text
     assert not discovery_workflow().startswith("---")
     assert "user-visible **discovery trace**" in text
-    parent_text = parent.messages[0].content.text
-    assert "list_providers" in parent_text and "speech recognition model" in parent_text
-    assert not parent_discovery_workflow().startswith("---")
+    assert "## What can be searched" in text and "does not imply" not in text
+    assert "say that this server cannot" in text
 
 
-def test_provider_registry_tool(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
+def test_unknown_artifact_type_is_a_tool_error(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
     async def go() -> Any:
         async with Client(_server(world, make_engine)) as client:
-            return await client.call_tool("list_providers", {})
+            return await client.call_tool("search", {"queries": ["whisper"], "artifact_type": "model"})
 
     res = run(go())
-    data = json.loads(res.content[0].text)
-    providers = {provider["id"]: provider for provider in data["providers"]}
-    assert data["schema_version"] == 1
-    assert providers["github"]["status"] == "available"
-    assert "find_reusable" in providers["github"]["tools"]
-    assert providers["huggingface"]["status"] == "planned"
-    assert providers["huggingface"]["tools"] == []
+    assert getattr(res, "is_error", getattr(res, "isError", False))

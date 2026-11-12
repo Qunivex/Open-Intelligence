@@ -104,7 +104,7 @@ def test_etag_revalidation_uses_cache() -> None:
     c = _client(httpx.MockTransport(handler))
     first = run(c.get("/repos/a/b", ttl=0))
     second = run(c.get("/repos/a/b", ttl=0))  # stale -> conditional request -> 304
-    assert first is not None and second is not None and second.data == {"n": 1} and second.from_cache
+    assert first is not None and second is not None and second.data == {"n": 1}
     assert calls[1].headers["if-none-match"] == '"v1"'
 
 
@@ -118,7 +118,7 @@ def test_fresh_cache_skips_the_network() -> None:
     c = _client(httpx.MockTransport(handler))
     run(c.get("/repos/a/b"))
     run(c.get("/repos/a/b"))
-    assert len(calls) == 1 and c.cache_hits == 1
+    assert len(calls) == 1
 
 
 def test_primary_rate_limit_stops_further_calls() -> None:

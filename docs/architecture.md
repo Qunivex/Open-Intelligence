@@ -1,86 +1,110 @@
 # Reuse Layer architecture
 
 Reuse Layer helps an agent find and assess reusable open-source components before building them. The
-architecture separates provider-neutral intent and routing from provider-specific discovery and checks.
+agent works out what the user needs; the server verifies, gates and ranks what the agent proposes.
+
+The server has two halves. The **engine** runs a pipeline that is the same for every source. A **source
+adapter** holds everything specific to one host. GitHub is the only adapter in this release.
 
 ## System view
 
 ```mermaid
 flowchart LR
     User[User request] --> Agent[Agent]
-    Agent --> Parent[Parent skill<br/>intent and artifact types]
-    Agent --> MCP[MCP server<br/>list_providers, GitHub tools]
-    MCP --> Registry[list_providers tool]
-    Registry --> Catalog[Packaged provider registry]
-    Parent --> GitSkill[GitHub discovery skill]
-    GitSkill --> Agent
-    Shell[CLI] --> CLIAdapter[CLI adapter]
-    MCP --> Engine[Reuse Layer engine]
-    CLIAdapter --> Engine
-    Engine --> Adapter[GitHub source adapter]
-    Adapter --> GH[GitHub REST API]
-    Engine <--> Cache[(SQLite HTTP cache<br/>and outcome ledger)]
+    Skill[reuse-discovery skill<br/>intent, capabilities, queries] --> Agent
+    Agent --> MCP[MCP server<br/>search, find_reusable, report_outcome]
+    Shell[CLI] --> Engine
+    MCP --> Engine[Engine<br/>source-neutral pipeline]
+    Engine --> Contract{{Source contract<br/>sources/base.py}}
+    Contract --> GitHub[GitHub adapter<br/>artifact_type: repository]
+    GitHub --> GH[GitHub REST API]
+    Contract -. future adapter .-> Other[another host<br/>another artifact_type]
+    Engine --> Judge[Relevance judge<br/>lexical, optional model]
+    Engine --> Rank[Coverage-first ranking<br/>and component verdict]
+    Engine <--> Store[(SQLite<br/>HTTP cache and outcome ledger)]
     Config[User config<br/>keys and policy] --> Engine
-    Engine --> Checks[Metadata gates<br/>evidence enrichment<br/>capability matching]
-    Checks --> Relevance[Lexical relevance<br/>optional model judge]
-    Relevance --> Rank[Coverage-first ranking<br/>and component verdict]
-    Rank --> Result[GitHub result<br/>optional normalized records]
-    Result --> MCP
-    MCP --> Agent
-    MCP --> Feedback[report_outcome]
-    Feedback --> Engine
-
-    Parent -. planned provider skill and adapter .-> HF[Hugging Face]
-    Parent -. planned provider skill and adapter .-> Kaggle[Kaggle]
 ```
-
-GitHub is the only active discovery provider today. Hugging Face and Kaggle are catalog entries marked
-`planned`; the dashed connections are an extension point, not working integrations. The registry is
-packaged at `src/reuse_layer/integrations/providers.toml` and surfaced to the parent through
-`list_providers`. It describes capabilities but does not execute searches.
 
 ## Request flow
 
 ```mermaid
 flowchart TD
-    Start[User describes a goal] --> Intent[Parent skill identifies job, constraints, ambiguities]
-    Intent --> Types[Identify artifact types and independent components]
-    Types --> Registry[Read available providers and strengths]
-    Registry --> Route{Available provider fits?}
-    Route -- No --> Gap[Explain source coverage gap]
-    Route -- Yes --> ProviderSkill[Apply provider-specific skill]
-    ProviderSkill --> Search[Search source and gather candidates]
-    Search --> Vet[Verify identity, evidence, license, version and source checks]
-    Vet --> Normalize[Emit source details and normalized artifact records]
-    Normalize --> Compare[Compare evidence and limitations by component]
-    Compare --> Decision[Present recommendations, gaps and unresolved checks]
-    Decision --> Approval{User approves integration?}
+    Start[User describes a goal] --> Intent[Skill: job to be done, constraints, ambiguities]
+    Intent --> Caps[Must-have capabilities, per component]
+    Caps --> Explore[search: explore vocabulary and candidates]
+    Explore --> Find[find_reusable: one call per component]
+    Find --> Gather[Gather: run searches, resolve named candidates]
+    Gather --> Meta[Metadata gates on the whole pool]
+    Meta --> Enrich[Enrich a shortlist with full evidence]
+    Enrich --> Judge[Judge fit and must-have coverage]
+    Judge --> Gates[Evidence gates, fail closed]
+    Gates --> Score[Score, select top 3, decide the verdict]
+    Score --> Present[Agent presents the decision and its trace]
+    Present --> Approval{User approves integration?}
     Approval -- No --> Done[Stop; nothing installed]
-    Approval -- Yes --> Integrate[Integrate exact returned revision]
-    Integrate --> Outcome[Report integration outcome when supported]
+    Approval -- Yes --> Integrate[Integrate the exact version and revision]
+    Integrate --> Outcome[report_outcome]
 ```
 
-Each component receives its own provider check and decision. Run checks sequentially to keep each request
-focused and make timeout retries easier to interpret. A provider-specific result remains authoritative
-for its own verdict and checks; normalized records provide shared fields for comparison, not a shared
-score or an assertion that checks are equivalent.
+Each component gets its own `find_reusable` call and its own decision. Checks run one after another, so a
+timeout or a retry belongs to one component.
 
-## Shared normalized artifact record
+## What the engine owns and what a source owns
 
-Every provider adapter should expose this additive record alongside its provider-specific result. GitHub
-includes it when `find_reusable` is called with `include_normalized=true`, keeping the default response
-compact:
+| Step | Engine (`core/engine.py`) | Source (`sources/base.py`) |
+| --- | --- | --- |
+| Plan | chooses caller queries or the fallback | `clean_query`, `fallback_queries` |
+| Gather | runs everything in parallel, pools and de-duplicates, records what failed | `search`, `resolve`, `parse_ref` |
+| Metadata gates | drops candidates that fail, builds the shortlist | `metadata_gates` |
+| Enrich | enforces the time budget, records what did not finish | `enrich` |
+| Judge | lexical judge, optional model judge, agreement bonus | `card` |
+| Evidence gates | turns unfinished checks into decisive gaps | `evidence_gates` |
+| Score | track record from the ledger, weighted total, selection, verdict | `assess` |
+| Respond | the shared result and pick fields | `pick_details`, `brief` |
+
+The engine never names a host. Messages that do ("GitHub is not connected") come from the source through
+`connection_note` and `rate_limit_note`.
+
+## One result shape
+
+Every pick has the same identity fields, whichever source produced it:
 
 | Field | Meaning |
 | --- | --- |
-| `schema_version` | Version of the normalized record contract. |
-| `provider_id`, `artifact_type` | Provider registry ID and artifact category. |
-| `id`, `name`, `url` | Stable provider identity, label, and canonical location. |
-| `version`, `revision` | Human-facing version and immutable revision, when available. |
-| `license` | SPDX or provider-reported license; `null` when not established. |
-| `evidence` | Capability matches, evidence locations, and checks actually completed. |
-| `limitations` | Missing evidence, unresolved checks, and integration risks. |
+| `id` | `pkg:<provider>/<name>@<version>` |
+| `provider`, `artifact_type` | the source's id and the kind of artifact |
+| `name`, `url` | canonical name and location |
+| `version`, `revision` | the pinned human-facing version and the immutable revision |
+| `license` | SPDX id as the host reports it; `null` when not established |
+| `summary`, `why`, `scores`, `gates` | the evidence behind the pick |
+| `unresolved_checks`, `integration_risks` | what stayed unknown, and what to watch |
 
-Unknown values stay unknown; adapters must not fill gaps with guesses. Keep provider scores, verdicts,
-licenses, and security findings in their original context because providers may use different
-methodologies.
+A source adds its own fields on top with `pick_details`. GitHub adds `get`, `ref_freshness`, `owner_tier`
+and `docs`. Unknown values stay unknown; an adapter must not fill a gap with a guess. Scores from
+different sources are not calibrated against each other and must not be compared as if they were.
+
+## Adding a source
+
+`artifact_type` is the routing key: one adapter serves each type, and callers select it with the
+`artifact_type` argument of `search` and `find_reusable`. There is no separate provider registry. The
+allowed values of that argument are the registry, and an agent sees them in the tool schema.
+
+1. Implement the `Source` protocol from `sources/base.py` in a new module under `sources/`.
+   `sources/github.py` is the reference implementation.
+2. Add the new type to `ArtifactType` in `core/models.py`.
+3. Register the adapter in `build_sources` (`sources/__init__.py`).
+4. Add a section for the artifact type to the `reuse-discovery` skill, under "What can be searched".
+5. Add its key to `KNOWN_KEYS` in `config.py` if the host needs a credential.
+
+An adapter describes candidates with the shared records in `core/models.py`: `Repo` for identity and
+metadata, `DeepFacts` for fetched evidence. That is what lets the relevance judge, the ranking formula,
+the verdict rules and the ledger work for it unchanged. Its gates and trust signals are its own: the
+checks that matter for a repository (advisories, upstream CI, signed tags) are not the ones that matter
+for a model or a dataset.
+
+Two things are still shaped by having a single source, and should be revisited with the second one:
+
+- The pipeline limits (`deadline_ms`, `max_candidates`, `deep_enrich`) live under `[github]` in the
+  config file.
+- The outcome ledger keys a pick by name alone. Two hosts that both have an `owner/name` would share a
+  track record until the key includes the provider.

@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import math
 import tomllib
+from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
 from importlib import resources
 
-from reuse_layer.core.models import DeepFacts, Repo, Scored
-from reuse_layer.sources.github import recent
+from reuse_layer.core.models import DeepFacts, Repo, Scored, recent
 
 
 @lru_cache(maxsize=1)
@@ -131,7 +131,7 @@ def _norm(name: str) -> str:
     return name.lower().replace("-", "").replace("_", "").replace(".", "")
 
 
-def lookalikes(pool: list[Scored]) -> dict[str, str]:
+def lookalikes(pool: Sequence[Scored]) -> dict[str, str]:
     """Map repo -> the more established repo its name imitates (different owner, near-identical name)."""
     out: dict[str, str] = {}
     for s in pool:

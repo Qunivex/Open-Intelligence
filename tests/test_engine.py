@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from conftest import TOKEN, FakeGitHub, FakeRepo, run
+import pytest
+
+from conftest import NOW, TOKEN, FakeGitHub, FakeRepo, make_settings, run
 from reuse_layer.core.engine import Engine, compact_json
 from reuse_layer.core.models import CallerContext, FindRequest, OutcomeReport
+from reuse_layer.core.store import Store
+from reuse_layer.sources.github import GitHubSource
 
 PRICING = FindRequest(
     task="Estimate and compare the cost of LLM API usage across providers from token counts and per-token prices",
@@ -28,7 +32,7 @@ def test_pricing_scenario_picks_the_right_projects(
 ) -> None:
     out = run(make_engine(world).find_reusable(PRICING))
     assert out["verdict"] == "reuse"
-    names = [p["repo"].removeprefix("https://github.com/") for p in out["picks"]]
+    names = [p["name"] for p in out["picks"]]
     assert 1 <= len(names) <= 3
     assert names[0] == "AgentOps-AI/tokencost"
     assert "quantlab/optionpricer" not in names  # same words, different meaning
@@ -53,8 +57,8 @@ def test_picks_are_pinned_with_evidence(world: FakeGitHub, make_engine: Callable
     out = run(make_engine(world).find_reusable(PRICING))
     top = out["picks"][0]
     assert top["id"].startswith("pkg:github/AgentOps-AI/tokencost@v1.")
-    assert len(top["pin"]["commit"]) == 40
-    assert top["pin"]["commit"] in top["archive"]
+    assert len(top["revision"]) == 40
+    assert top["revision"][:12] in top["get"]
     assert "--branch v1." in top["get"]
     assert top["gates"]["license"].startswith("MIT")
     assert top["gates"]["vulns"] == "no published advisories"
@@ -66,7 +70,7 @@ def test_picks_are_pinned_with_evidence(world: FakeGitHub, make_engine: Callable
     assert freshness["default_branch_commit_at"] is not None
     assert freshness["default_branch_is_newer"] is True
     assert freshness["default_branch_ahead_days"] > 0
-    assert top["source"] == {"name": "GitHub", "tier": 2}  # verified organization
+    assert top["provider"] == "github" and top["owner_tier"] == 2  # verified organization
 
 
 def test_branch_fallback_reports_its_commit_freshness(make_engine: Callable[..., Engine]) -> None:
@@ -77,7 +81,7 @@ def test_branch_fallback_reports_its_commit_freshness(make_engine: Callable[...,
     out = run(make_engine(gh).find_reusable(req))
 
     pick = out["picks"][0]
-    assert pick["pin"]["ref"] == "main"
+    assert pick["version"] == "main"
     assert pick["ref_freshness"]["pinned_commit_at"] == pick["ref_freshness"]["default_branch_commit_at"]
     assert pick["ref_freshness"]["default_branch_is_newer"] is False
     assert pick["ref_freshness"]["default_branch_ahead_days"] == 0
@@ -95,7 +99,6 @@ def test_at_most_one_newer_project_takes_the_explore_slot(
 
 def test_response_is_compact(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
     out = run(make_engine(world).find_reusable(PRICING))
-    assert all("normalized" not in pick for pick in out["picks"])
     # ~1,500 tokens is roughly 6,000 characters of compact JSON
     assert len(compact_json(out)) < 6500
 
@@ -184,15 +187,13 @@ def test_fallback_queries_when_caller_gives_none(
             assert generic not in q.split()
 
 
-def test_search_github_is_compact_and_public_only(
-    world: FakeGitHub, make_engine: Callable[..., Engine]
-) -> None:
+def test_search_is_compact_and_public_only(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
     out = run(make_engine(world).search(["llm cost estimation is:private user:@me"], per_query=5))
     q = out["results"][0]["query"]
     assert "is:private" not in q and "@me" not in q and "is:public" in q
-    repos = out["results"][0]["repos"]
+    repos = out["results"][0]["items"]
     assert 0 < len(repos) <= 5
-    assert all("private" not in r["repo"] for r in repos)
+    assert all("private" not in r["name"] for r in repos)
     assert "untrusted" in out
 
 
@@ -200,7 +201,7 @@ def test_report_outcome_feeds_preference(world: FakeGitHub, make_engine: Callabl
     engine = make_engine(world)
     out = run(engine.find_reusable(PRICING))
     rec = out["recommendation_id"]
-    top = out["picks"][0]["repo"].removeprefix("https://github.com/")
+    top = out["picks"][0]["name"]
 
     bad = engine.report_outcome(OutcomeReport(recommendation_id="rec_" + "0" * 26, repo=top, outcome="kept"))
     assert bad == {"accepted": False, "reason": "unknown recommendation_id"}
@@ -215,7 +216,7 @@ def test_report_outcome_feeds_preference(world: FakeGitHub, make_engine: Callabl
     assert dup["accepted"] is False
 
     again = run(engine.find_reusable(PRICING))
-    top_again = next(p for p in again["picks"] if p["repo"].endswith(top))
+    top_again = next(p for p in again["picks"] if p["name"] == top)
     assert top_again["scores"]["preference"] > 0.5
     assert any("recorded integrations" in w for w in top_again["why"])
 
@@ -225,3 +226,34 @@ def test_task_text_is_not_retained_by_default(world: FakeGitHub, make_engine: Ca
     run(engine.find_reusable(PRICING))
     rows = engine.store._db.execute("SELECT task_text, task_hash FROM recommendation").fetchall()
     assert rows and rows[0][0] is None and len(rows[0][1]) == 64
+
+
+# --------------------------------------------------------------------------- more than one source
+
+
+class _SecondSource(GitHubSource):
+    """Stands in for a future adapter: another host, serving another artifact type."""
+
+    id = "hub"
+    name = "Hub"
+    artifact_type = "model"
+
+
+def test_engine_routes_each_artifact_type_to_its_own_source(
+    world: FakeGitHub, make_engine: Callable[..., Engine]
+) -> None:
+    github = make_engine(world).sources["repository"]
+    assert isinstance(github, GitHubSource)
+    second = _SecondSource(github.client)
+    engine = Engine(make_settings(), store=Store(":memory:"), sources=[github, second], now=lambda: NOW)
+    assert sorted(engine.sources) == ["model", "repository"]
+
+    by_default = run(engine.search(["llm cost estimation"]))
+    routed = run(engine.search(["llm cost estimation"], artifact_type="model"))
+    assert (by_default["provider"], by_default["artifact_type"]) == ("github", "repository")
+    assert (routed["provider"], routed["artifact_type"]) == ("hub", "model")
+
+    with pytest.raises(ValueError, match="no source is registered"):
+        run(engine.search(["llm"], artifact_type="dataset"))
+    with pytest.raises(ValueError, match="same artifact type"):
+        Engine(make_settings(), store=Store(":memory:"), sources=[github, github])

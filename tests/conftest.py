@@ -396,7 +396,8 @@ def make_engine() -> Callable[..., Engine]:
             store=store,
             transport=gh.transport(),
         )
-        return Engine(settings, store=store, source=GitHubSource(client), now=lambda: NOW, seed=seed)
+        source = GitHubSource.from_settings(settings, client)
+        return Engine(settings, store=store, sources=[source], now=lambda: NOW, seed=seed)
 
     return factory
 

@@ -41,7 +41,6 @@ def card(readme: str, description: str = "A toolkit", name: str = "acme/toolkit"
         owner_type="Organization",
         stars=10,
         forks=10,
-        open_issues=1,
     )
     return build_card(repo, readme)
 

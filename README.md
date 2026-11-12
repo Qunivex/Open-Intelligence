@@ -10,13 +10,10 @@ integration risks. When it could not gather enough evidence to decide (rate limi
 `inconclusive` instead of pretending nothing exists. See [Verdicts and evidence](#verdicts-and-evidence).
 
 v1 follows the *Reuse Layer: Build Plan* with one deliberate scope cut: **GitHub is the only source.**
-The parent discovery skill and provider registry separate user intent from provider-specific search.
-GitHub is active; Hugging Face and Kaggle are listed as planned extensions. See
-[the architecture and flow diagrams](docs/architecture.md).
-
-`reuse-layer install-skill` installs both the provider-neutral `reuse-discovery` parent skill and the
-GitHub-specific `github-oss-discovery` skill. The MCP `list_providers` tool exposes the packaged registry;
-planned providers are clearly marked and are not yet searchable.
+The pipeline itself is source-neutral: everything specific to GitHub sits behind one adapter interface, so
+another host (models, datasets) is added as an adapter without touching the pipeline. See
+[the architecture and flow diagrams](docs/architecture.md), including
+[how to add a source](docs/architecture.md#adding-a-source).
 
 ## Quick start
 
@@ -79,16 +76,25 @@ relevance judge and storage.
 | Tool | Why it exists | Returns |
 | --- | --- | --- |
 | `find_reusable` | **The tool.** One component's decision and its top 3. | Verdict `reuse` / `reuse_partial` / `build_yourself` / `no_candidates` / `inconclusive`; `recommendation`; `coverage` of the must-haves; `evidence` and `unresolved_checks`; ranked, gated, pinned picks with `gates` and `integration_risks`; `rejected` with reasons; `unresolved` invented names |
-| `search_github` | Dependency of the discovery skill: the GitHub token lives in the server, so exploration has to go through it. | Compact results per query (name, about, topics, language, license, last push) |
+| `search` | Dependency of the discovery skill: the GitHub token lives in the server, so exploration has to go through it. | Compact results per query (name, about, topics, language, license, last push) |
 | `report_outcome` | Dependency of the ranking: the track-record factor (20%) needs integration outcomes. | Acknowledgement and updated retention |
 
-The prompt **`discover_github_projects`** carries the discovery workflow to any MCP client, including
-ones that cannot load skills.
+`find_reusable` and `search` take an `artifact_type`. Its allowed values are the artifact types that have
+a source adapter, so the tool schema is the list of what can be searched; there is no registry to query
+first. Today the only value is `repository` (public GitHub repositories), and it is the default.
+
+Every pick has the same identity fields whichever source it came from: `provider`, `artifact_type`,
+`name`, `url`, `version` (the pinned tag or branch), `revision` (the commit SHA) and `license`. The
+source adds its own on top; for GitHub those are `get` (the clone command), `ref_freshness`,
+`owner_tier` and `docs`.
+
+The prompt **`discover_reusable`** carries the discovery workflow to any MCP client, including ones that
+cannot load skills.
 
 ## Discovery: intent, not keywords
 
 Splitting a request into keywords finds projects that share its *words*, not its *meaning*. The
-[`github-oss-discovery` skill](src/reuse_layer/integrations/skills/github-oss-discovery/SKILL.md) has the
+[`reuse-discovery` skill](src/reuse_layer/integrations/skills/reuse-discovery/SKILL.md) has the
 agent:
 
 1. write an **intent brief**: the job to be done, the kind of artifact, constraints, and an ambiguity
@@ -98,7 +104,7 @@ agent:
    upstream primitives, standards and formats, adjacent domains, awesome-lists, vendor orgs;
 4. build a **query portfolio** of differently angled searches (practitioner phrase, `topic:`,
    `in:readme` phrase, data/artifact, language-scoped, `NOT` the wrong sense);
-5. explore with `search_github`, then refine once from the vocabulary of the good hits;
+5. explore with `search`, then refine once from the vocabulary of the good hits;
 6. hand everything to `find_reusable`, one call per component, which verifies, gates and ranks it;
 7. show the user a short **discovery trace** and the decision: the interpreted job, the must-have
    requirements, the constraints applied, the searches used, the candidate shortlist and what happened to
@@ -184,7 +190,7 @@ Each result carries, for its component:
 
 | Section | Where | Contents |
 | --- | --- | --- |
-| Recommendation | `verdict`, `recommendation` | the recommended `repo` (when there is one), the `reason`, and the `next` step |
+| Recommendation | `verdict`, `recommendation` | the recommended `repo` (its name, when there is one), the `reason`, and the `next` step |
 | Coverage summary | `coverage` | `must_have` count, and for the recommended pick `covered` and `missing`; `found_in` says for each covered one whether the evidence is in the `readme` or only in the repository's `metadata` (name, topics, description); `unknown` when the verdict is `inconclusive` |
 | Gate results | `picks[].gates`, `rejected[]` | each gate's finding for every pick; for rejections the gate and reason, with `unchecked: true` when the check could not complete |
 | Unresolved checks | `unresolved_checks`, `picks[].unresolved_checks` | what could not be established, for the component and for each pick |
@@ -236,15 +242,17 @@ pytest                       # offline: a fake GitHub API, no network
 ruff check src tests && ruff format --check src tests && mypy
 ```
 
-Layout (design §Repo layout, GitHub-only):
+Layout:
 
 ```
 src/reuse_layer/
   config.py, config.example.toml   the user config file and its template
-  core/        engine (pipeline), models, ranking, gates, signals, relevance, cards, discovery, store, text, licenses
-  sources/     github.py (REST client + source plugin), registry.toml (tiers, curated owners)
+  core/        engine (the source-neutral pipeline), models, ranking, relevance, store, text;
+               gates, signals, cards, discovery, licenses (checks the GitHub adapter is built from)
+  sources/     base.py (the Source contract), github.py (REST client + adapter),
+               __init__.py (build_sources: where adapters are registered), registry.toml (curated owners)
   adapters/    mcp_server.py, cli.py
-  integrations/skills/github-oss-discovery/SKILL.md
+  integrations/skills/reuse-discovery/SKILL.md
 tests/         offline tests against a fake GitHub API
 ```
 
@@ -253,4 +261,5 @@ tests/         offline tests against a fake GitHub API
 Other sources (PyPI, npm, Hugging Face, government and research catalogs), deps.dev/ecosyste.ms
 dependents and one-hop trust, OSV and OpenSSF Scorecard, sandbox verification, `compare`/`verify`/
 `check_dependency`, the dependency hook and GitHub Action, the hosted HTTP server with OAuth, and
-learning-to-rank. The source, signal and gate code is organised so each can be added as a plugin.
+learning-to-rank. A new source is added as an adapter behind `sources/base.py`; see
+[Adding a source](docs/architecture.md#adding-a-source).

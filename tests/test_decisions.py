@@ -40,7 +40,7 @@ from reuse_layer.core.models import (
     Repo,
     Scored,
 )
-from reuse_layer.sources.github import RateLimited
+from reuse_layer.sources.base import RateLimited
 
 PRICES = "up-to-date per-token prices for many LLM models | LLM pricing data | model prices"
 COUNTING = "count tokens for prompts and completions | token counting | tokenizer"
@@ -111,7 +111,7 @@ def request(*candidates: str, **kw: Any) -> FindRequest:
 
 
 def names(out: dict[str, Any]) -> list[str]:
-    return [p["repo"].removeprefix("https://github.com/") for p in out["picks"]]
+    return [p["name"] for p in out["picks"]]
 
 
 # --------------------------------------------------------------------------- 1. incomplete evidence
@@ -165,14 +165,15 @@ def test_a_candidate_that_could_not_be_verified_is_not_reported_as_invented(
 
 def _hang(engine: Engine, *slow: str) -> None:
     """Make the evidence pass for the named repositories (or all of them) outlast the deadline."""
-    real = engine.source.enrich
+    source = engine.sources["repository"]
+    real = source.enrich
 
     async def enrich(repo: Repo) -> DeepFacts:
         if not slow or repo.full_name in slow:
             await asyncio.sleep(60)
         return await real(repo)
 
-    engine.source.enrich = enrich  # type: ignore[method-assign]
+    source.enrich = enrich  # type: ignore[method-assign]
 
 
 SHORT_DEADLINE = make_settings(github=GitHubSettings(deadline_ms=1000))
@@ -211,7 +212,7 @@ def test_rate_limited_evidence_pass_is_inconclusive(make_engine: Callable[..., E
     async def limited(repo: Repo) -> DeepFacts:
         raise RateLimited("GitHub rate limit reached")
 
-    engine.source.enrich = limited  # type: ignore[method-assign]
+    engine.sources["repository"].enrich = limited  # type: ignore[method-assign]
     out = run(engine.find_reusable(request("BerriAI/litellm")))
     assert out["verdict"] == "inconclusive" and out["picks"] == []
     assert out["unresolved_checks"][0] == (
@@ -368,7 +369,6 @@ def _repo(name: str, stars: int = 10) -> Repo:
         owner_type="Organization",
         stars=stars,
         forks=10,
-        open_issues=1,
     )
 
 
@@ -453,7 +453,6 @@ def test_each_component_gets_its_own_decision(world: FakeGitHub, make_engine: Ca
                 "BerriAI/litellm",
                 component="token counting",
                 capabilities=[COUNTING],
-                include_normalized=True,
             )
         )
     )
@@ -477,25 +476,24 @@ def test_each_component_gets_its_own_decision(world: FakeGitHub, make_engine: Ca
         for p in out["picks"]:
             assert {"status", "license", "vulns", "malware", "provenance"} <= set(p["gates"])
     assert counting["verdict"] == "reuse" and counting["recommendation"]["repo"] == "openai/tiktoken"
-    normalized = counting["picks"][0]["normalized"]
+    # every pick carries the same identity fields, whichever source it came from
+    top = counting["picks"][0]
     assert {
-        "schema_version": 1,
-        "provider_id": "github",
+        "id": f"pkg:github/openai/tiktoken@{top['version']}",
+        "provider": "github",
         "artifact_type": "repository",
         "name": "openai/tiktoken",
-        "version": normalized["version"],
-        "revision": normalized["revision"],
+        "url": "https://github.com/openai/tiktoken",
         "license": "MIT",
-    }.items() <= normalized.items()
-    assert normalized["evidence"]["capabilities"]["covered"][0]["source"] in ("readme", "metadata")
-    assert normalized["evidence"]["checks"]["license"]["status"] == "passed"
+    }.items() <= top.items()
+    assert len(top["revision"]) == 40 and "pin" not in top and "normalized" not in top
     assert counting["coverage"] == {
         "must_have": 1,
         "covered": [COUNTING_LABEL],
         "missing": [],
         "found_in": ["metadata"],  # the repository's own name says "token"
     }
-    gateway = next(p for p in counting["picks"] if p["repo"].endswith("litellm"))
+    gateway = next(p for p in counting["picks"] if p["name"].endswith("litellm"))
     assert gateway["integration_risks"][0].startswith("No evidence for must-have")
     assert hud["verdict"] == "build_yourself" and "repo" not in hud["recommendation"]
     assert hud["coverage"]["missing"] == ["cockpit HUD overlay"]
@@ -576,7 +574,7 @@ def test_component_round_trip_over_mcp(world: FakeGitHub, make_engine: Callable[
         "capabilities": [COUNTING],
         "candidates": ["openai/tiktoken"],
         "context": {"language": "python"},
-        "include_normalized": True,
+        "artifact_type": "repository",
     }
 
     async def go() -> Any:
@@ -587,8 +585,8 @@ def test_component_round_trip_over_mcp(world: FakeGitHub, make_engine: Callable[
     tools, res = run(go())
     data = json.loads(res.content[0].text)
     assert data["component"] == "token counting" and data["verdict"] == "reuse"
-    assert data["picks"][0]["normalized"]["provider_id"] == "github"
-    assert data["picks"][0]["normalized"]["revision"] == data["picks"][0]["pin"]["commit"]
+    assert data["picks"][0]["provider"] == "github"
+    assert data["picks"][0]["revision"][:12] in data["picks"][0]["get"]
     description = next(t.description for t in tools if t.name == "find_reusable")
     for verdict in ("reuse_partial", "build_yourself", "no_candidates", "inconclusive"):
         assert verdict in description
@@ -620,7 +618,7 @@ def test_cli_prints_the_component_decision(capsys: pytest.CaptureFixture[str]) -
                     "scores": {"total": 0.7},
                     "summary": "s",
                     "why": [],
-                    "pin": {"ref": "v1"},
+                    "version": "v1",
                     "integration_risks": ["No evidence for must-have: y"],
                     "unresolved_checks": ["upstream CI status not read"],
                     "get": "git clone",

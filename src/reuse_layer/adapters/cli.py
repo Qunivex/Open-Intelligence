@@ -5,7 +5,7 @@ reuse-layer config init|path|show     create / locate / summarise the config fil
 reuse-layer keys set <name>           store a key in the OS keychain (prompted, never echoed)
 reuse-layer doctor                    check the config and the GitHub connection
 reuse-layer find "<task>" [...]       same as the find_reusable tool, JSON or text output
-reuse-layer search "<query>" [...]    same as the search_github tool
+reuse-layer search "<query>" [...]    same as the search tool
 reuse-layer install-skill [...]       install the discovery skill for Claude Code
 """
 
@@ -35,7 +35,10 @@ from reuse_layer.config import (
     write_template,
 )
 
-SKILLS = ("reuse-discovery", "github-oss-discovery")
+SKILL = "reuse-discovery"
+# Skill names earlier versions installed. One left behind would send an agent to tools that no
+# longer exist, so `install-skill` points it out.
+RETIRED_SKILLS = ("github-oss-discovery",)
 _WRITE_SCOPES = {
     "repo",
     "public_repo",
@@ -266,22 +269,14 @@ def _print_find(r: dict[str, Any]) -> None:
             branch = freshness.get("default_branch")
             branch_at = freshness.get("default_branch_commit_at")
             if pinned_at and branch and branch_at:
-                if p["pin"]["ref"] == branch:
+                if p["version"] == branch:
                     status = "pinned ref is the default branch head"
                 elif freshness.get("default_branch_is_newer") is True:
-                    minutes = freshness.get("default_branch_ahead_minutes")
-                    days = freshness.get("default_branch_ahead_days")
-                    if isinstance(minutes, int | float) and minutes < 60:
-                        difference = f"{minutes:g} minutes"
-                    elif isinstance(minutes, int | float) and minutes < 1440:
-                        difference = f"{minutes / 60:.1f} hours"
-                    elif isinstance(days, int | float):
-                        difference = f"{days:g} days"
-                    else:
-                        difference = "a newer commit"
-                    status = f"{branch} is newer than pinned {p['pin']['ref']} by {difference}"
+                    status = f"{branch} is newer than pinned {p['version']} by " + _ahead(
+                        freshness.get("default_branch_ahead_days")
+                    )
                 else:
-                    status = f"{branch} is not newer than pinned {p['pin']['ref']}"
+                    status = f"{branch} is not newer than pinned {p['version']}"
                 print(f"   ref freshness: pinned {pinned_at}; branch head {branch_at} ({status})")
             else:
                 print("   ref freshness: commit date unavailable")
@@ -298,7 +293,7 @@ def _print_find(r: dict[str, Any]) -> None:
             kind = "unchecked" if x.get("unchecked") else "failed"
             print(f"   - {x['repo']}: {x['gate']} {kind}: {x['reason']}")
     if r.get("unresolved"):
-        print(f"\nunresolved (not real GitHub repos): {', '.join(r['unresolved'])}")
+        print(f"\nunresolved (no such {r.get('artifact_type', 'artifact')}): {', '.join(r['unresolved'])}")
     for n in r.get("notes", []):
         print(f"\nnote: {n}")
     print(
@@ -306,6 +301,18 @@ def _print_find(r: dict[str, Any]) -> None:
     )
     if r.get("limits"):
         print(r["limits"])
+
+
+def _ahead(days: Any) -> str:
+    """How far ahead the default branch is, in the unit a person would use."""
+    if not isinstance(days, int | float):
+        return "a newer commit"
+    minutes = days * 1440
+    if minutes < 60:
+        return f"{minutes:.0f} minutes"
+    if minutes < 1440:
+        return f"{minutes / 60:.1f} hours"
+    return f"{days:g} days"
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -326,26 +333,19 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_install_skill(args: argparse.Namespace) -> int:
     base = Path(args.project).expanduser().resolve() / ".claude" if args.project else Path.home() / ".claude"
-    skills = [
-        (
-            name,
-            resources.files("reuse_layer.integrations").joinpath("skills", name, "SKILL.md"),
-            base / "skills" / name / "SKILL.md",
-        )
-        for name in SKILLS
-    ]
-    existing = [dest for _, _, dest in skills if dest.exists()]
-    if existing and not args.force:
-        print(
-            f"{', '.join(str(path) for path in existing)} exists; pass --force to overwrite",
-            file=sys.stderr,
-        )
+    src = resources.files("reuse_layer.integrations").joinpath("skills", SKILL, "SKILL.md")
+    dest = base / "skills" / SKILL / "SKILL.md"
+    if dest.exists() and not args.force:
+        print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
         return 1
-    for _, src, dest in skills:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with resources.as_file(src) as source:
-            shutil.copyfile(source, dest)
-        print(f"Installed discovery skill at {dest}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with resources.as_file(src) as source:
+        shutil.copyfile(source, dest)
+    print(f"Installed discovery skill at {dest}")
+    for name in RETIRED_SKILLS:
+        old = base / "skills" / name
+        if old.exists():
+            print(f"Remove the retired skill at {old}: it names tools this version no longer has.")
     exe = Path(sys.executable)
     print("\nRegister the MCP server with Claude Code (once):")
     print(f'  claude mcp add reuse-layer --scope user -- "{exe}" -m reuse_layer mcp')
@@ -398,12 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--json", action="store_true")
     f.set_defaults(fn=cmd_find)
 
-    s = sub.add_parser("search", help="search GitHub repositories (discovery helper)")
+    s = sub.add_parser("search", help="search for candidates (discovery helper)")
     s.add_argument("queries", nargs="+")
     s.add_argument("--per-query", type=int, default=8)
     s.set_defaults(fn=cmd_search)
 
-    i = sub.add_parser("install-skill", help="install the parent and GitHub discovery skills")
+    i = sub.add_parser("install-skill", help="install the discovery skill for Claude Code")
     i.add_argument("--project", help="install into this project's .claude/skills instead of ~/.claude/skills")
     i.add_argument("--force", action="store_true")
     i.set_defaults(fn=cmd_install_skill)

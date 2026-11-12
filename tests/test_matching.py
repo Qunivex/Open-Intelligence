@@ -39,7 +39,6 @@ def repo(name: str, description: str = "", topics: tuple[str, ...] = ()) -> Repo
         owner_type="Organization",
         stars=10,
         forks=10,
-        open_issues=1,
     )
 
 

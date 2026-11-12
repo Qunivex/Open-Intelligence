@@ -214,7 +214,7 @@ def test_unreadable_release_history_is_not_reported_as_no_releases(
     gh = world()
     gh.fail_paths.add("/releases")
     pick = find(gh, make_engine)["picks"][0]
-    assert pick["pin"]["ref"] == "main"  # the release could not be found, so the branch head was pinned
+    assert pick["version"] == "main"  # the release could not be found, so the branch head was pinned
     risks = " | ".join(pick["integration_risks"])
     assert "Release history could not be read: pinned to branch main" in risks
     assert "No releases or version tags" not in risks  # that would be a claim the evidence does not support

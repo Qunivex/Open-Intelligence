@@ -37,7 +37,6 @@ def repo(name: str = "acme/thing", **kw: object) -> Repo:
         owner_type="Organization",
         stars=100,
         forks=10,
-        open_issues=1,
     )
     base.update(kw)
     return Repo(**base)  # type: ignore[arg-type]
