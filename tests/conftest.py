@@ -19,6 +19,7 @@ from reuse_layer.core.engine import Engine
 from reuse_layer.core.models import Repo
 from reuse_layer.core.store import Store
 from reuse_layer.sources.github import GitHubClient, GitHubSource
+from reuse_layer.sources.packages import PackageChecker, RegistryClient
 
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
 TOKEN = "github_pat_TESTTOKEN_abcdefghijklmnopqrstuvwxyz0123"
@@ -51,6 +52,10 @@ class FakeRepo:
     forks: int = 50
     readme: str = ""
     releases: int = 6  # stable releases in the last year (one every ~45 days)
+    # Named releases instead, newest first: (tag, prerelease). Overrides `releases`.
+    release_tags: list[tuple[str, bool]] | None = None
+    tags: list[str] = field(default_factory=list)  # what the /tags endpoint lists (tags without a release)
+    files: dict[str, str] = field(default_factory=dict)  # path -> text at every commit (contents, trees)
     contributors: int = 20
     capped: bool = False
     health: int = 80
@@ -84,6 +89,19 @@ class FakeRepo:
             "homepage": f"https://{owner.lower()}.example.org",
         }
 
+    def release_rows(self) -> list[dict[str, Any]]:
+        """The /releases payload, newest first."""
+        named = self.release_tags
+        if named is None:
+            named = [(f"v1.{i}.0", False) for i in reversed(range(self.releases))]
+        return [
+            {"tag_name": tag, "draft": False, "prerelease": pre, "published_at": iso(i * 45 + 5)}
+            for i, (tag, pre) in enumerate(named)
+        ]
+
+    def tag_names(self) -> list[str]:
+        return [r["tag_name"] for r in self.release_rows()] + self.tags
+
 
 def sha_for(name: str, ref: str) -> str:
     import hashlib
@@ -100,6 +118,7 @@ class FakeGitHub:
         self.forbid_paths: set[str] = set()  # path substrings that return a plain HTTP 403
         self.missing_paths: set[str] = set()  # path substrings that return HTTP 404
         self.advisory_page_size: int | None = None  # paginate /advisories with a cursor, like GitHub
+        self.contents_refs: list[str] = []  # the ?ref= of every contents read
 
     def add(self, *repos: FakeRepo) -> None:
         for r in repos:
@@ -180,19 +199,25 @@ class FakeGitHub:
         if rest == "/readme":
             return httpx.Response(200, text=r.readme or f"# {name}\n\n{r.description}\n", headers=headers)
         if rest == "/releases":
-            rel = [
-                {
-                    "tag_name": f"v1.{i}.0",
-                    "draft": False,
-                    "prerelease": False,
-                    "published_at": iso(i * 45 + 5),
-                }
-                for i in range(r.releases)
-            ]
-            rel = list(reversed(sorted(rel, key=lambda x: x["published_at"])))
-            return httpx.Response(200, json=rel, headers=headers)
+            return httpx.Response(200, json=r.release_rows(), headers=headers)
         if rest == "/tags":
-            return httpx.Response(200, json=[], headers=headers)
+            return httpx.Response(200, json=[{"name": t} for t in r.tags], headers=headers)
+        if rest == "/contents":  # the root directory at ?ref=
+            self.contents_refs.append(request.url.params.get("ref", ""))
+            top = [{"name": n, "path": n, "type": "file"} for n in r.files if "/" not in n]
+            top_dirs = sorted({n.split("/")[0] for n in r.files if "/" in n} | {"src"})
+            return httpx.Response(
+                200, json=[*top, *({"name": d, "path": d, "type": "dir"} for d in top_dirs)], headers=headers
+            )
+        if rest.startswith("/contents/") and rest[len("/contents/") :] in r.files:
+            self.contents_refs.append(request.url.params.get("ref", ""))
+            return httpx.Response(200, text=r.files[rest[len("/contents/") :]], headers=headers)
+        if rest.startswith("/git/trees/"):  # ?recursive=1: every file, plus the directories
+            self.contents_refs.append(rest[len("/git/trees/") :])
+            subdirs = {"/".join(n.split("/")[:i]) for n in r.files for i in range(1, n.count("/") + 1)}
+            tree = [{"path": n, "type": "blob", "mode": "100644"} for n in sorted(r.files)]
+            tree += [{"path": d, "type": "tree", "mode": "040000"} for d in sorted(subdirs)]
+            return httpx.Response(200, json={"sha": "t", "tree": tree, "truncated": False}, headers=headers)
         if rest == "/contributors":
             rows = [
                 {"login": f"dev{i}", "type": "User", "contributions": 100 - i} for i in range(r.contributors)
@@ -213,11 +238,7 @@ class FakeGitHub:
             return httpx.Response(200, json={"object": {"type": obj_type, "sha": sha}}, headers=headers)
         m = re.match(r"^/git/tags/(.+)$", rest)
         if m:
-            tag = next(
-                f"v1.{i}.0"
-                for i in range(max(1, r.releases))
-                if sha_for(name, f"tagobj:v1.{i}.0") == m.group(1)
-            )
+            tag = next(t for t in r.tag_names() if sha_for(name, f"tagobj:{t}") == m.group(1))
             return httpx.Response(
                 200,
                 json={
@@ -230,7 +251,7 @@ class FakeGitHub:
         if m:
             tag_sha = m.group(1)
             commit_days = next(
-                (i * 45 + 5 for i in range(max(1, r.releases)) if sha_for(name, f"v1.{i}.0") == tag_sha),
+                (i * 45 + 5 for i, t in enumerate(r.tag_names()) if sha_for(name, t) == tag_sha),
                 r.pushed_days,
             )
             return httpx.Response(
@@ -270,6 +291,33 @@ class FakeGitHub:
             runs = [] if r.ci == "none" else [{"status": "completed", "conclusion": r.ci}]
             return httpx.Response(200, json={"total_count": len(runs), "check_runs": runs}, headers=headers)
         return httpx.Response(404, json={"message": "Not Found"})
+
+
+class FakeRegistries:
+    """Package registries (PyPI, npm, ...): exact URL -> (status, JSON, or text for an XML document).
+    Anything else is a 404."""
+
+    def __init__(self) -> None:
+        self.docs: dict[str, tuple[int, Any]] = {}
+        self.requests: list[httpx.Request] = []
+        self.delay_s = 0.0  # answer this slowly, to exercise the time budget
+
+    def add(self, url: str, body: Any, status: int = 200) -> None:
+        self.docs[url] = (status, body)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    async def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        status, body = self.docs.get(str(request.url), (404, {"message": "not found"}))
+        if status in (301, 302) and isinstance(body, str):
+            return httpx.Response(status, headers={"location": body})
+        if isinstance(body, str):
+            return httpx.Response(status, text=body, headers={"content-type": "application/xml"})
+        return httpx.Response(status, json=body)
 
 
 def pricing_world() -> FakeGitHub:
@@ -386,7 +434,12 @@ def world() -> FakeGitHub:
 @pytest.fixture
 def make_engine() -> Callable[..., Engine]:
     def factory(
-        gh: FakeGitHub, settings: Settings | None = None, *, token: bool = True, seed: int = 7
+        gh: FakeGitHub,
+        settings: Settings | None = None,
+        *,
+        token: bool = True,
+        seed: int = 7,
+        registries: FakeRegistries | None = None,
     ) -> Engine:
         settings = settings or make_settings()
         store = Store(":memory:")
@@ -397,7 +450,11 @@ def make_engine() -> Callable[..., Engine]:
             store=store,
             transport=gh.transport(),
         )
-        source = GitHubSource.from_settings(settings, client)
+        # Registries are always faked: a test never reaches a real one.
+        reg = RegistryClient(
+            store=store, budget_ms=2000, transport=(registries or FakeRegistries()).transport()
+        )
+        source = GitHubSource.from_settings(settings, client, PackageChecker(reg))
         return Engine(settings, store=store, sources=[source], now=lambda: NOW, seed=seed)
 
     return factory

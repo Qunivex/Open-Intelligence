@@ -99,8 +99,9 @@ def test_at_most_one_newer_project_takes_the_explore_slot(
 
 def test_response_is_compact(world: FakeGitHub, make_engine: Callable[..., Engine]) -> None:
     out = run(make_engine(world).find_reusable(PRICING))
-    # ~1,500 tokens is roughly 6,000 characters of compact JSON
-    assert len(compact_json(out)) < 6500
+    # ~1,700 tokens is roughly 7,000 characters of compact JSON. Each pick also says how to take it
+    # (`version_kind`, and its registry `package`), about 150 characters each.
+    assert len(compact_json(out)) < 7000
 
 
 def test_token_never_leaks_into_urls_or_responses(

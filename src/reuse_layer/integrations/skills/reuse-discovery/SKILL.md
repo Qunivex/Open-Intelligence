@@ -42,6 +42,20 @@ component's `find_reusable` call before starting the next; do not run component 
 component, say so and use that: a dependency the project already carries beats any new one. Take a
 component to `find_reusable` only when nothing already in the project covers it.
 
+**Ask once which versions the user accepts.** Every pick is pinned to one version of the project, and
+which kinds are acceptable is the user's call, not yours. Before the first `find_reusable` call in the
+conversation, unless the user has already said, ask one short question with these two answers, and pass
+the answer as `context.ref_policy` on every call that follows:
+
+- **Standard releases only** (`standard`, the default): the latest stable release with a plain version
+  tag (`v1.2.3`, `1.2.3`, or the project's name and a version, `tokio-1.37.0`). A project with none is
+  pinned to the head of its default branch (main/master), and the pick says so.
+- **Everything** (`all`): the highest version of any kind, including pre-releases (`rc`, `beta`) and tags
+  in other naming schemes (`pkg@1.2.3`, `release-1.2.3`). Newer, less proven.
+
+Ask it alongside any other question you have, not as a separate interruption. If nobody can answer (an
+unattended run), use `standard` and say that you did.
+
 ### 1. Write an intent brief (for yourself, not the user)
 
 - **Job to be done**: one sentence, in the domain's own language, of what the software must do. This
@@ -131,8 +145,9 @@ Call it with:
 - `candidates`: up to 5 `owner/repo` names from steps 3 and 5, best first.
 - `search_queries`: your 1 or 2 best queries, so the tool can also find what you missed.
 - `avoid`: the unintended senses from step 1.
-- `context`: `language`; `license_policy` only if the user stated one (default is permissive);
-  `allow_new: true` only if the user wants cutting-edge projects; `exclude` for anything already tried.
+- `context`: `language`; `ref_policy`, the user's answer from the version question (`standard` or
+  `all`); `license_policy` only if the user stated one (default is permissive); `allow_new: true` only if
+  the user wants cutting-edge projects; `exclude` for anything already tried.
 - `artifact_type`: `repository` (the default).
 
 For a multi-component need, make one call per component, sequentially. Wait for one result before
@@ -152,8 +167,8 @@ that produced it, taken from what you sent and what the tool returned:
 
 1. **Interpreted job**: the one-sentence job to be done and the kind of artifact sought.
 2. **Must-have requirements**: the capabilities you passed, by their first phrasing, and the `avoid` senses.
-3. **Constraints**: language, license policy, minimum age, exclusions. Read them back from `constraints`,
-   which includes defaults you did not set.
+3. **Constraints**: language, license policy, minimum age, version policy (`ref_policy`), exclusions.
+   Read them back from `constraints`, which includes defaults you did not set.
 4. **Searches used**: your `search` queries and the tool's `queries`. Say which did not complete
    (a `search` row with `error`, or a "search not completed" line in `unresolved_checks`).
 5. **Candidate shortlist**: every name you passed or the tool found, and what happened to it: a pick;
@@ -164,6 +179,27 @@ that produced it, taken from what you sent and what the tool returned:
    and the pick's own) and `integration_risks`. `coverage.found_in` says, for each covered must-have,
    whether the evidence is a statement in the README (`readme`) or only the repository's name, topics or
    description (`metadata`). Say when coverage rests on metadata alone: it is thinner evidence.
+7. **How to take each pick**: what it is pinned to (`version_kind`: a `release`, a `prerelease`, a
+   version `tag`, or a `branch` head that is not a release) and the ways to get it:
+   - **From GitHub**: the `get` command, at `version` and `revision`. Always available.
+   - **From the package registry**, only when `package.status` is `published`: the `install` command,
+     on `package.registry` (PyPI, npm, crates.io, Go module proxy, RubyGems, Packagist, Maven Central,
+     NuGet; for Maven Central `install` is the `group:artifact:version` coordinates to add to `pom.xml`
+     or `build.gradle`). It means the registry has that name at that version *and* links it to this
+     repository. When `package.path` is there, the package is published from that subdirectory of a
+     monorepo: say so, since the GitHub `get` clones the whole repository. When `package.attested` is
+     `true`, the registry holds a build attestation naming this repository (the registry's record, not
+     a signature this tool checked); when `false`, the registry keeps such records and has none for this
+     version, which is worth one short mention. When `package.same_commit` is `true`, the registry also
+     records the pinned commit as the build source; when `false`, say so as a warning. Repeat
+     `package.detail` when it is there (for example that a branch pin may be ahead of the published
+     version).
+   - Otherwise say why the registry is not an option, from `package.status`: `not_published` (no such
+     version on the registry), `unknown` (could not be checked, with the reason), `unsupported` (no
+     registry check for that language). For `not_linked` say the registry's package of that name does
+     **not** point to this repository (or its build attestation names another one) and may be a
+     different project; for `yanked` say the maintainers withdrew (or, on NuGet, unlisted) that version.
+     Never offer either one as a way to install the pick.
 
 For several components, finish with one line per component: its name, verdict, recommended repository
 (or "build"), and what is still open.
@@ -174,8 +210,9 @@ step-by-step reasoning: no chain-of-thought, only the trace above.
 What each verdict means and what to say:
 
 - **reuse**: the recommended pick shows evidence for every must-have. List the picks in order: name,
-  one-line reason from `why`, notable `integration_risks`, and the exact `get` command with the pinned
-  `version` and `revision` (the commit). Say that a pick marked `explore` is newer and less proven.
+  one-line reason from `why`, notable `integration_risks`, what it is pinned to, and the ways to take it
+  (item 7 above). Say that a pick marked `explore` is newer and less proven, and that a `prerelease` or
+  `branch` pin is not a stable release.
 - **reuse_partial**: the recommended pick is worth using but leaves must-haves uncovered. Say which it
   covers and which it does not (`coverage.missing`). If `coverage.covered_by_other_picks` names another
   pick for a gap, say so; otherwise treat the gap as its own component (run this workflow for it) or as
@@ -202,7 +239,8 @@ Rules that hold for every verdict:
 - Never mention `unresolved` names as options: they do not exist.
 - If a note says GitHub is not connected, ask the user to add a token to the Reuse Layer config file
   (`reuse-layer config path` shows where). Never ask for a token in chat and never put one in a tool call.
-- Install or vendor only what `find_reusable` returned, at the `version` and `revision` it gave.
+- Install or vendor only what `find_reusable` returned, at the `version` and `revision` it gave, or the
+  registry package its `package` field names as `published`, at that `package.version`.
 
 ### 8. Confirm before you build on it
 
@@ -213,7 +251,11 @@ blocking. It has not been run. Before wiring a pick into the project:
    capability, not a code review. Start with anything `coverage.found_in` marks as `metadata`.
 2. Settle the `unresolved_checks` that matter here, such as language fit when no language was given or
    a README that could not be read.
-3. Add it at the pinned `version` and `revision`, and run the project's own tests.
+3. When the pick's `package.status` is `published`, ask the user how to take it: the registry package
+   (`install`: a normal dependency the project's package manager tracks and updates) or the source from
+   GitHub (`get`: the exact commit, vendored or built by the project). Do not choose for them. When it is
+   not published, the GitHub source is the only way: say so, with the reason.
+4. Add it the way the user chose, at the pinned version, and run the project's own tests.
 
 If it does not do what its README says, do not work around it: report the outcome (step 9), then take
 the next pick, or call `find_reusable` again with it in `context.exclude`.
@@ -266,11 +308,15 @@ gateways that ship a model-price table (e.g. `BerriAI/litellm`). Primitive: toke
   "candidates": ["AgentOps-AI/tokencost", "BerriAI/litellm", "openai/tiktoken"],
   "search_queries": ["llm cost estimation", "\"cost per token\" in:readme", "llm model prices json"],
   "avoid": ["option pricing", "black-scholes"],
-  "context": {"language": "python"}
+  "context": {"language": "python", "ref_policy": "standard"}
 }
 ```
 
-Then present the result as in step 7. Suppose the verdict is `reuse_partial` because the recommended
+(`ref_policy` is the user's answer to the version question; here they chose standard releases.)
+
+Then present the result as in step 7. If the top pick is pinned to release `0.1.12` and its `package`
+is `published` on PyPI, show both ways to take it, `pip install tokencost==0.1.12` and the GitHub `get`
+command, and let the user choose. Suppose instead the verdict is `reuse_partial` because the recommended
 gateway shows no evidence for token counting: say so, point to the tokenizer if
 `coverage.covered_by_other_picks` names it, and otherwise run the workflow again with "token counting" as
 its own component. If the user's product also needs, say, a pricing-comparison UI, that is another

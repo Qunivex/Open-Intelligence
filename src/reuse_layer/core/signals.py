@@ -67,6 +67,9 @@ def trust(repo: Repo, deep: DeepFacts, now: datetime) -> tuple[float, list[str],
     elif deep.pin is not None and deep.pin.kind == "tag":
         cadence = 0.3
         evidence.append(f"versioned tags, no GitHub releases (latest {deep.pin.ref})")
+    elif deep.pin is not None and deep.pin.skipped:
+        # It does tag versions, just none the caller's ref policy accepts: the source says which.
+        cadence = 0.3
     else:
         cadence = 0.0
         risks.append("No releases or version tags: pinned to a branch commit")

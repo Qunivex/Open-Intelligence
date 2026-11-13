@@ -13,7 +13,8 @@ find_reusable pipeline:
 3. Gate    - the source's cheap metadata gates on the whole pool (for GitHub: status, license,
              age, language).
 4. Enrich  - the source's full evidence for a shortlist (for GitHub: README, releases,
-             contributors, community health, advisories, a pinned commit, upstream CI).
+             contributors, community health, advisories, a commit pinned under the caller's
+             ``ref_policy``, upstream CI).
 5. Judge   - relevance from capability cards (lexical, plus a small model when configured), and
              which must-have capabilities each card evidences (lexical only).
 6. Gate    - the source's evidence gates (for GitHub: vulnerabilities, malware, provenance,
@@ -21,6 +22,10 @@ find_reusable pipeline:
 7. Score   - the weighted formula, then pick the top 3 (one explore slot), ordered by must-have
              coverage before score, and decide reuse / reuse_partial / build_yourself /
              no_candidates / inconclusive (rules in ``ranking``).
+8. Package - for the picks only, whether each is also published at its pinned version on its
+             language's package registry (for GitHub: PyPI, npm, crates.io, Go, RubyGems,
+             Packagist, Maven Central, NuGet). Informational: it runs after the decision and
+             cannot change it.
 
 One call decides one component of the caller's project. Its result carries that component's
 recommendation, coverage summary, gate results, unresolved checks and integration risks.
@@ -64,6 +69,8 @@ LIMITS = (
     "Gates and scores report what the listed checks found, not that a project is safe or compatible: "
     "review and test a pick before relying on it."
 )
+PACKAGE_CHECK_MIN_S = 3.0
+PACKAGE_CHECK_MAX_S = 10.0
 
 
 class Engine:
@@ -134,6 +141,7 @@ class Engine:
             allow_new=ctx.allow_new,
             require_signed_releases=g.require_signed_releases,
             language=ctx.language,
+            ref_policy=ctx.ref_policy,
         )
 
     def _source(self, artifact_type: str) -> Source:
@@ -314,7 +322,7 @@ class Engine:
 
         # 4. Enrich (bounded by the deadline; unfinished ones fail closed) -------
         if shortlist:
-            tasks = {asyncio.create_task(source.enrich(s.repo)): s for s in shortlist}
+            tasks = {asyncio.create_task(source.enrich(s.repo, policy)): s for s in shortlist}
             done, pending = await asyncio.wait(tasks, timeout=max(1.0, deadline - time.monotonic()))
             for t in pending:
                 t.cancel()
@@ -411,6 +419,16 @@ class Engine:
             len(pool), picks, cfg.ranking, must_have=len(must), gaps=len(gaps), unexamined=unexamined
         )
         top = decision.recommended
+
+        # 8. Packages: where the picks are also published. Informational, and run after the
+        # decision, so it can never change a pick, a gate or the verdict. Bounded: it may use what is
+        # left of the deadline, but never less than a few seconds and never more than ten.
+        if picks:
+            budget = min(PACKAGE_CHECK_MAX_S, max(PACKAGE_CHECK_MIN_S, deadline - time.monotonic()))
+            try:
+                await asyncio.wait_for(source.check_packages(picks), timeout=budget)
+            except TimeoutError:
+                log.info("package check stopped at its time budget (%.1fs)", budget)
         if not pool and gaps:
             evidence = "unavailable"  # nothing could be fetched at all
         elif gaps or any(s.deep.errors for s in enriched if s.passed and s.deep):
@@ -589,6 +607,7 @@ def _constraints(p: GatePolicy, excluded: int) -> dict[str, Any]:
         out["min_age_days"] = p.min_age_days
     if p.require_signed_releases:
         out["signed_releases_required"] = True
+    out["ref_policy"] = p.ref_policy
     if excluded:
         out["excluded"] = excluded
     return out
@@ -612,6 +631,7 @@ def _pick(s: Scored, source: Source) -> dict[str, Any]:
         "name": s.repo.full_name,
         "url": s.repo.html_url,
         "version": pin.ref,
+        "version_kind": pin.version_kind,
         "revision": pin.sha,
         "license": s.repo.license_spdx,
         "summary": s.card.summary if s.card else s.repo.description,

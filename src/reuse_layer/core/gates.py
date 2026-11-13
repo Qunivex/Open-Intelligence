@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from reuse_layer.core import licenses
-from reuse_layer.core.models import GateResult, Repo, Scored
+from reuse_layer.core.models import GateResult, RefPolicy, Repo, Scored
 
 _LANG_GROUPS = (
     {"javascript", "typescript", "js", "ts", "node", "nodejs", "vue", "svelte"},
@@ -54,6 +54,9 @@ class GatePolicy:
     allow_new: bool
     require_signed_releases: bool
     language: str | None
+    # Not a gate: which refs the source may pin (see ``RefPolicy``). Carried here because this is
+    # the caller's constraints as the source sees them.
+    ref_policy: RefPolicy = "standard"
 
 
 def same_language(want: str, have: str) -> bool:

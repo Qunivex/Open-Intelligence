@@ -22,7 +22,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
@@ -40,7 +40,9 @@ from reuse_layer.core.models import (
     CiState,
     DeepFacts,
     GateResult,
+    Package,
     Pin,
+    RefPolicy,
     Release,
     Repo,
     Scored,
@@ -48,6 +50,7 @@ from reuse_layer.core.models import (
 from reuse_layer.core.store import CachedResponse, Store
 from reuse_layer.core.text import sanitize
 from reuse_layer.sources.base import RateLimited, SourceError
+from reuse_layer.sources.packages import PackageChecker
 
 log = logging.getLogger(__name__)
 
@@ -429,15 +432,77 @@ def repo_from_json(d: Any) -> Repo | None:
     )
 
 
-_SEMVER = re.compile(r"^[^\d]*?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
-_PRE = re.compile(r"(alpha|beta|rc|pre|dev|nightly|canary|snapshot)", re.IGNORECASE)
+# --------------------------------------------------------------------------- choosing the ref to pin
+
+# A plain version: MAJOR.MINOR with optional PATCH and BUILD, nothing after it. A major-only tag (v1)
+# is not one on purpose: such tags are usually moved to each new release (GitHub Actions do this).
+_PLAIN = r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?"
+_STANDARD = re.compile(rf"^[vV]?{_PLAIN}$")
+_ANY = re.compile(r"^[^\d]*?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+# What follows the version number in a pre-release: 2.0.0-rc.1, 2.0.0rc1, 2.0.0b2, 1.0.0.dev3 ...
+_PRE_SUFFIX = re.compile(
+    r"^[-._]?(?:alpha|beta|rc|pre|preview|dev|nightly|canary|snapshot|[abc]\d)", re.IGNORECASE
+)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def version_key(tag: str) -> tuple[int, int, int] | None:
-    m = _SEMVER.match(tag)
-    if not m or _PRE.search(tag):
+def standard_version(tag: str, project: str | None = None) -> tuple[int, ...] | None:
+    """The version of a standard version tag, or None for any other tag.
+
+    Standard means a plain version (``v1.2.3``, ``1.2.3``, ``1.2``), or the project's own name and a
+    plain version (``tokio-1.37.0``, ``ai@3.4.0``, ``name-v1.2``): the release of the project itself,
+    not of a sub-package, a pre-release or a moving major tag.
+    """
+    m = _STANDARD.match(tag)
+    if m is None and project:
+        m = re.match(rf"^{re.escape(project)}[-@_]?[vV]?{_PLAIN}$", tag, re.IGNORECASE)
+    return tuple(int(g or 0) for g in m.groups()) if m else None
+
+
+def any_version(tag: str) -> tuple[int, int, int, int] | None:
+    """Sort key for a tag in any naming scheme, a pre-release just below its release; None when the
+    tag carries no version number (``nightly``, ``latest``)."""
+    m = _ANY.match(tag)
+    if m is None:
         return None
-    return int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0)
+    final = 0 if _PRE_SUFFIX.match(tag[m.end() :]) else 1
+    return int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0), final
+
+
+def is_prerelease_tag(tag: str) -> bool:
+    key = any_version(tag)
+    return key is not None and key[3] == 0
+
+
+def choose_release(
+    releases: Sequence[Release], policy: RefPolicy, project: str | None = None
+) -> tuple[Release | None, set[str]]:
+    """The release to pin under ``policy``, and the release tags the policy passed over.
+
+    standard: the highest stable release with a standard version tag. all: the highest version of
+    any kind, pre-releases included; when no release tag carries a version (rolling ``nightly``
+    releases), the most recently published one.
+    """
+    if policy == "standard":
+        keyed = [(v, r) for r in releases if not r.prerelease and (v := standard_version(r.tag, project))]
+        passed = {r.tag for r in releases} - {r.tag for _, r in keyed}
+        return (max(keyed, key=lambda x: x[0])[1] if keyed else None), passed
+    ranked = [(k, r) for r in releases if (k := any_version(r.tag))]
+    if ranked:
+        return max(ranked, key=lambda x: (x[0], x[1].published_at or _EPOCH))[1], set()
+    return max(releases, key=lambda r: r.published_at or _EPOCH, default=None), set()
+
+
+def choose_tag(
+    names: Sequence[str], policy: RefPolicy, project: str | None = None
+) -> tuple[str | None, set[str]]:
+    """The version tag to pin under ``policy``, and the version tags the policy passed over."""
+    versioned = [(k, n) for n in names if (k := any_version(n))]
+    if policy == "standard":
+        keyed = [(v, n) for n in names if (v := standard_version(n, project))]
+        passed = {n for _, n in versioned} - {n for _, n in keyed}
+        return (max(keyed)[1] if keyed else None), passed
+    return (max(versioned)[1] if versioned else None), set()
 
 
 # --------------------------------------------------------------------------- source plugin
@@ -460,17 +525,22 @@ class GitHubSource:
         *,
         curated_owners: frozenset[str] | None = None,
         newer_than_days: int = 180,
+        packages: PackageChecker | None = None,
     ) -> None:
         self.client = client
+        self.packages = packages  # None: picks are not looked up on package registries
         self._curated = signals.registry_curated_owners() if curated_owners is None else curated_owners
         self._newer_than_days = newer_than_days
 
     @classmethod
-    def from_settings(cls, settings: Settings, client: GitHubClient) -> GitHubSource:
+    def from_settings(
+        cls, settings: Settings, client: GitHubClient, packages: PackageChecker | None = None
+    ) -> GitHubSource:
         return cls(
             client,
             curated_owners=signals.registry_curated_owners() | frozenset(settings.curated_owners),
             newer_than_days=settings.ranking.newer_than_days,
+            packages=packages,
         )
 
     # ------------------------------------------------------------------ connection
@@ -488,6 +558,8 @@ class GitHubSource:
 
     async def aclose(self) -> None:
         await self.client.aclose()
+        if self.packages is not None:
+            await self.packages.aclose()
 
     # ------------------------------------------------------------------ discovery
 
@@ -544,6 +616,16 @@ class GitHubSource:
         s.verified, s.verified_detail = signals.verified(deep)
         if deep.ci == "failing":
             s.risks.append("Upstream CI is failing on the pinned commit")
+        pin = deep.pin
+        if pin is not None and pin.kind == "branch" and pin.skipped:
+            s.risks.append(
+                f"Pinned to the {pin.ref} branch head, not a release: its {pin.skipped} releases or version "
+                "tags are pre-releases or not plain version tags (ref_policy standard)"
+            )
+        elif pin is not None and pin.prerelease:
+            s.risks.append(
+                f"Pinned to a pre-release ({pin.ref}): its API may change before the final release"
+            )
         s.newer = signals.is_newer(s.repo, self._newer_than_days, now)
         if signals.sudden_riser(s.repo, deep, now):
             s.probation = True
@@ -587,7 +669,37 @@ class GitHubSource:
             out["get"] = f"git clone {url}.git && git -C {s.repo.name} checkout {pin.sha}"
         if s.repo.homepage:
             out["docs"] = s.repo.homepage
+        if deep.package is not None:
+            out["package"] = deep.package.as_dict()
         return out
+
+    async def check_packages(self, picks: Sequence[Scored]) -> None:
+        """Look each pick up on its language's package registry at the pinned version (see
+        ``sources/packages.py``). A pick the engine's time budget cuts off says so."""
+        if self.packages is None:
+            return
+        todo = [s for s in picks if s.deep is not None and s.deep.pin is not None]
+        for s in todo:
+            assert s.deep is not None
+            s.deep.package = Package("unknown", "registry not checked within the time budget")
+        await asyncio.gather(*(self._check_package(s) for s in todo))
+
+    async def _check_package(self, s: Scored) -> None:
+        assert self.packages is not None
+        assert s.deep is not None
+        pin = s.deep.pin
+        assert pin is not None
+        try:
+            package = await self.packages.check(s.repo, pin, _PinnedFiles(self, s.repo.full_name, pin.sha))
+        except Exception:  # informational: a bug here must never cost the user their picks
+            log.exception("package check failed for %s", s.repo.full_name)
+            package = Package("unknown", "registry check failed")
+        s.deep.package = package
+        if package.same_commit is False:
+            s.risks.append(
+                f"{package.registry} records {package.name} {package.version} as built from a different "
+                "commit than the pinned revision: the tag may have moved"
+            )
 
     # ------------------------------------------------------------------ GitHub REST calls
 
@@ -644,7 +756,7 @@ class GitHubSource:
             query = {**params, **following}
         return None
 
-    async def enrich(self, repo: Repo) -> DeepFacts:
+    async def enrich(self, repo: Repo, policy: gates.GatePolicy) -> DeepFacts:
         facts = DeepFacts()
         fn = repo.full_name
 
@@ -701,18 +813,24 @@ class GitHubSource:
             facts.org_verified = bool(got["org"].data.get("is_verified"))
         _advisories(repo, got, facts)
 
-        facts.pin = await self._pin(repo, facts)
+        facts.pin = await self._pin(repo, facts, policy.ref_policy)
         if facts.pin is not None:
             facts.ci = await self._ci(repo, facts.pin.sha, facts)
         return facts
 
-    async def _pin(self, repo: Repo, facts: DeepFacts) -> Pin | None:
-        """Pin to the latest stable release tag (else the highest version tag, else the default branch)."""
+    async def _pin(self, repo: Repo, facts: DeepFacts, policy: RefPolicy) -> Pin | None:
+        """Pin under the caller's ``policy``: a release, else a version tag, else the default branch.
+
+        See :func:`choose_release` and :func:`choose_tag` for what each policy accepts. A project
+        with no qualifying release or tag is pinned to its default branch head, and ``Pin.skipped``
+        counts the releases and version tags the policy passed over, so that a branch pin of a
+        project that does publish versions is never mistaken for one that publishes none.
+        """
         ref: str | None = None
         kind: Literal["release", "tag", "branch"] = "release"
-        stable = [r for r in facts.releases if not r.prerelease]
-        if stable:
-            ref = stable[0].tag
+        release, passed = choose_release(facts.releases, policy, repo.name)
+        if release is not None:
+            ref = release.tag
         else:
             try:
                 tags = await self.client.get(
@@ -722,13 +840,17 @@ class GitHubSource:
                 facts.errors.append(f"tags: {exc}")
                 tags = None
             names = [
-                t.get("name")
+                n
                 for t in (tags.data if tags and isinstance(tags.data, list) else [])
-                if isinstance(t, dict)
+                if isinstance(t, dict) and isinstance(n := t.get("name"), str)
             ]
-            versioned = [(version_key(n), n) for n in names if isinstance(n, str) and version_key(n)]
-            if versioned:
-                ref, kind = max(versioned)[1], "tag"
+            tag, passed_tags = choose_tag(names, policy, repo.name)
+            passed |= passed_tags
+            if tag is not None:
+                ref, kind = tag, "tag"
+        prerelease = ref is not None and (
+            (release is not None and release.prerelease) or is_prerelease_tag(ref)
+        )
 
         try:
             branch = await self.client.get(
@@ -744,12 +866,13 @@ class GitHubSource:
 
         if ref is not None:
             try:
-                return await self._pin_tag(repo, ref, kind, facts)
+                pin = await self._pin_tag(repo, ref, kind, facts)
             except GitHubError as exc:
                 # Only the pin is lost (the provenance gate then fails closed); the rest of the
                 # evidence already gathered for this repository is kept.
                 facts.errors.append(f"pin: {exc}")
                 return None
+            return replace(pin, prerelease=prerelease, skipped=len(passed)) if pin else None
         if not isinstance(branch_commit, dict):
             facts.errors.append("pin: default branch head could not be resolved")
             return None
@@ -767,6 +890,7 @@ class GitHubSource:
             sha=sha,
             signature=_signature(verification),
             committed_at=facts.default_branch_commit_at,
+            skipped=len(passed),
         )
 
     async def _pin_tag(
@@ -844,6 +968,57 @@ class GitHubSource:
         if all(c in ("success", "neutral", "skipped") for c in conclusions):
             return "passing"
         return "unknown"
+
+
+class _PinnedFiles:
+    """A repository's files at one commit: the root through the contents API, every path through the
+    git trees API, and one file's text through the contents API."""
+
+    def __init__(self, source: GitHubSource, full_name: str, sha: str) -> None:
+        self._source, self._full_name, self._sha = source, full_name, sha
+
+    async def names(self) -> list[str] | None:
+        res = await self._source.client.get(
+            self._source._path(self._full_name, "contents"), params={"ref": self._sha}, ttl=DAY
+        )
+        if res is None or not isinstance(res.data, list):
+            return None
+        return [
+            n
+            for e in res.data
+            if isinstance(e, dict) and e.get("type") == "file" and isinstance(n := e.get("name"), str)
+        ]
+
+    async def tree(self) -> list[str] | None:
+        # One request for every path. GitHub cuts a tree off at 100,000 entries ("truncated"): the
+        # paths it did return are still real, and manifests sit near the root, so they are used.
+        res = await self._source.client.get(
+            self._source._path(self._full_name, "git", "trees", self._sha),
+            params={"recursive": "1"},
+            ttl=DAY,
+            max_bytes=8_000_000,
+        )
+        entries = res.data.get("tree") if res is not None and isinstance(res.data, dict) else None
+        if not isinstance(entries, list):
+            return None
+        return [
+            p
+            for e in entries
+            if isinstance(e, dict) and e.get("type") == "blob" and isinstance(p := e.get("path"), str)
+        ]
+
+    async def read(self, path: str) -> str | None:
+        parts = path.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            return None
+        res = await self._source.client.get(
+            self._source._path(self._full_name, "contents", *parts),
+            params={"ref": self._sha},
+            accept=RAW,
+            ttl=DAY,
+            max_bytes=200_000,
+        )
+        return res.data if res is not None and isinstance(res.data, str) else None
 
 
 _FAILED = object()

@@ -152,12 +152,19 @@ class RelevanceSettings:
 
 
 @dataclass(frozen=True)
+class PackageSettings:
+    check: bool = True  # look each pick up on its language's package registry (PyPI, npm, ...)
+    budget_ms: int = 4000  # per-request timeout for registry calls
+
+
+@dataclass(frozen=True)
 class Settings:
     keys: dict[str, Secret] = field(default_factory=dict)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     ranking: RankingSettings = field(default_factory=RankingSettings)
     gates: GateSettings = field(default_factory=GateSettings)
     relevance: RelevanceSettings = field(default_factory=RelevanceSettings)
+    packages: PackageSettings = field(default_factory=PackageSettings)
     storage_path: Path | None = None
     retain_task_text: bool = False
     curated_owners: tuple[str, ...] = ()
@@ -197,6 +204,7 @@ class Settings:
         rl = _table(data, "relevance")
         st = _table(data, "storage")
         tiers = _table(data, "tiers")
+        pk = _table(data, "packages")
 
         github = GitHubSettings(
             api_url=_https_url(_str(gh, "api_url", GitHubSettings.api_url)),
@@ -245,12 +253,16 @@ class Settings:
         )
         storage = _str(st, "path", "")
         owners = tiers.get("curated_owners", [])
+        packages = PackageSettings(
+            check=_bool(pk, "check", True), budget_ms=_int(pk, "budget_ms", 4000, 200, 30_000)
+        )
         return cls(
             keys=keys,
             github=github,
             ranking=ranking,
             gates=gates,
             relevance=relevance,
+            packages=packages,
             storage_path=Path(storage).expanduser() if storage else None,
             retain_task_text=_bool(st, "retain_task_text", False),
             curated_owners=tuple(str(o).lower() for o in owners if isinstance(o, str)),

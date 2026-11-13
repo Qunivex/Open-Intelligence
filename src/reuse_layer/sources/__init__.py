@@ -8,6 +8,7 @@ from reuse_layer.config import Settings
 from reuse_layer.core.store import Store
 from reuse_layer.sources.base import Source
 from reuse_layer.sources.github import GitHubClient, GitHubSource
+from reuse_layer.sources.packages import PackageChecker, RegistryClient
 
 
 def build_sources(
@@ -22,4 +23,9 @@ def build_sources(
         max_concurrency=settings.github.max_concurrency,
         transport=transport,
     )
-    return [GitHubSource.from_settings(settings, github)]
+    packages = None
+    if settings.packages.check:
+        packages = PackageChecker(
+            RegistryClient(budget_ms=settings.packages.budget_ms, store=store, transport=transport)
+        )
+    return [GitHubSource.from_settings(settings, github, packages)]

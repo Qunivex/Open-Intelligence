@@ -208,6 +208,7 @@ def cmd_find(args: argparse.Namespace) -> int:
         license_policy=args.license_policy,
         allow_new=args.allow_new,
         exclude=args.exclude or [],
+        ref_policy=args.ref_policy,
     )
     req = FindRequest(
         task=args.task,
@@ -284,7 +285,11 @@ def _print_find(r: dict[str, Any]) -> None:
             print(f"   ! {k}")
         for k in p.get("unresolved_checks", []):
             print(f"   ? {k}")
+        print(f"   pinned: {p.get('version_kind', 'ref')} {p['version']}")
         print(f"   get: {p['get']}")
+        package = p.get("package")
+        if isinstance(package, dict):
+            print(f"   package: {_package_line(package)}")
     if r.get("also_passed"):
         print(f"\nalso passed the gates, ranked lower: {', '.join(r['also_passed'])}")
     if r.get("rejected"):
@@ -301,6 +306,22 @@ def _print_find(r: dict[str, Any]) -> None:
     )
     if r.get("limits"):
         print(r["limits"])
+
+
+def _package_line(package: dict[str, Any]) -> str:
+    """One line on the registry package: how to install it, or why it is not offered."""
+    where = " ".join(str(package[k]) for k in ("registry", "name", "version") if package.get(k))
+    if package.get("path"):
+        where += f" from {package['path']}/"
+    status = str(package.get("status", "unknown")).replace("_", " ")
+    line = f"{package['install']}  ({where}, {status})" if package.get("install") else f"{status}: {where}"
+    if package.get("attested") is True:
+        line += "; the registry's build attestation names this repository"
+    if package.get("same_commit") is True:
+        line += "; built from the pinned commit"
+    if package.get("detail"):
+        line += f"; {package['detail']}"
+    return line
 
 
 def _ahead(days: Any) -> str:
@@ -395,6 +416,13 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--language")
     f.add_argument("--license-policy", choices=["permissive", "weak_copyleft", "any_osi"])
     f.add_argument("--allow-new", action="store_true")
+    f.add_argument(
+        "--ref-policy",
+        choices=["standard", "all"],
+        default="standard",
+        help="standard: stable releases with plain version tags, else the default branch (default); "
+        "all: the highest version of any kind, pre-releases and other tag names included",
+    )
     f.add_argument("--json", action="store_true")
     f.set_defaults(fn=cmd_find)
 

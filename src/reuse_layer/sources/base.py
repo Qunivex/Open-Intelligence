@@ -90,8 +90,8 @@ class Source(Protocol):
         """Cheap gates from search metadata alone. They run on every candidate."""
         ...
 
-    async def enrich(self, repo: Repo) -> DeepFacts:
-        """Fetch the full evidence for one shortlisted candidate."""
+    async def enrich(self, repo: Repo, policy: GatePolicy) -> DeepFacts:
+        """Fetch the full evidence for one shortlisted candidate, pinned under ``policy.ref_policy``."""
         ...
 
     def card(self, repo: Repo, deep: DeepFacts | None) -> Card:
@@ -108,6 +108,16 @@ class Source(Protocol):
     def assess(self, s: Scored, now: datetime) -> None:
         """Fill the scoring inputs of an enriched candidate: trust, owner tier, verification,
         newness, risks and the checks that stayed unresolved."""
+        ...
+
+    async def check_packages(self, picks: Sequence[Scored]) -> None:
+        """For the final picks only: record where each is also published at its pinned version
+        (for a repository: its language's package registry) in ``deep.package``.
+
+        Informational: it runs after the decision and never changes a pick, gate or verdict. The
+        engine bounds it with a timeout; a pick it did not finish must say so, not stay silent. A
+        source with nothing to check does nothing.
+        """
         ...
 
     def pick_details(self, s: Scored) -> dict[str, Any]:

@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 LicensePolicy = Literal["permissive", "weak_copyleft", "any_osi"]
 Outcome = Literal["kept", "replaced", "removed", "tests_passed", "tests_failed"]
 CiState = Literal["passing", "failing", "pending", "none", "unknown"]
+# Which refs a pick may be pinned to. The user chooses (the discovery skill asks once):
+#   standard  a stable release with a plain version tag (v1.2.3, 1.2.3), else the default branch head
+#   all       the highest version of any kind: pre-releases and any tag naming scheme included
+RefPolicy = Literal["standard", "all"]
+# Whether a pick is also published, at its pinned version, on its language's package registry.
+PackageStatus = Literal["published", "yanked", "not_published", "not_linked", "unknown", "unsupported"]
 # What can be searched for. One source adapter serves each type (see ``sources/base.py``); adding
 # an adapter adds its type here, which is how callers learn that it exists.
 ArtifactType = Literal["repository"]
@@ -50,6 +56,15 @@ class CallerContext(BaseModel):
         default_factory=list,
         max_length=20,
         description="owner/repo names to leave out (already tried, rejected).",
+    )
+    ref_policy: RefPolicy = Field(
+        default="standard",
+        description=(
+            "Which version of each pick to pin, as the user chose. standard (default): the latest stable "
+            "release with a plain version tag (v1.2.3, 1.2.3); a project with none is pinned to its default "
+            "branch head (main/master). all: the highest version of any kind, including pre-releases (rc, "
+            "beta) and tags in other naming schemes (pkg@1.2.3, release-1.2.3)."
+        ),
     )
 
     @field_validator("language")
@@ -141,6 +156,55 @@ class Pin:
     sha: str  # full commit SHA (the hash every pick is pinned to)
     signature: str  # valid | unsigned | <GitHub verification reason>
     committed_at: datetime | None = None
+    prerelease: bool = False  # a pre-release or a pre-release tag (only under ref_policy "all")
+    # Releases and version tags the ref policy passed over (under "standard": pre-releases and
+    # non-standard tag names). Non-zero on a branch pin means the project does publish versions.
+    skipped: int = 0
+
+    @property
+    def version_kind(self) -> str:
+        """release | prerelease | tag | branch: what a person needs to know about the pinned ref."""
+        return "prerelease" if self.prerelease else self.kind
+
+
+@dataclass(frozen=True)
+class Package:
+    """The pick's package on its language's official registry, at the pinned version.
+
+    Informational: it is never a gate and never scored. ``published`` needs the registry's own
+    metadata to name this repository as the package's source; a package that only shares the name
+    is ``not_linked``, because anyone can register a name.
+    """
+
+    status: PackageStatus
+    detail: str = ""
+    registry: str | None = None  # "PyPI", "npm", ...
+    name: str | None = None
+    version: str | None = None
+    install: str | None = None
+    # The registry names the commit it was built from: does it match the pinned revision? None when
+    # the registry does not say.
+    same_commit: bool | None = None
+    # The directory the package is published from, when it is not the repository root (a monorepo).
+    path: str | None = None
+    # True: the registry holds a build attestation (or trusted-publishing record) naming this
+    # repository. False: the registry records these and has none for this version. None: the registry
+    # records none of either kind, or it was not checked.
+    attested: bool | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        out: dict[str, object] = {
+            "registry": self.registry,
+            "name": self.name,
+            "version": self.version,
+            "path": self.path,
+            "status": self.status,
+            "install": self.install,
+            "same_commit": self.same_commit,
+            "attested": self.attested,
+            "detail": self.detail,
+        }
+        return {k: v for k, v in out.items() if v not in (None, "")}
 
 
 @dataclass
@@ -160,6 +224,8 @@ class DeepFacts:
     org_verified: bool | None = None
     pin: Pin | None = None
     ci: CiState = "unknown"
+    # Filled for the final picks only, after ranking; None when no registry check ran.
+    package: Package | None = None
     errors: list[str] = field(default_factory=list)
 
 

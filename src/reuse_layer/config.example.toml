@@ -63,6 +63,14 @@ max_days_since_push = 730      # projects with no push in this many days count a
 allow_forks = false
 require_signed_releases = false
 
+[packages]
+# After ranking, look each pick up on its language's official package registry (PyPI, npm, crates.io,
+# the Go module proxy, RubyGems, Packagist) at the pinned version, so you can choose between installing
+# the published package and using the source from GitHub. Informational only: never a gate or a score.
+# Registries are called over HTTPS with no credentials; only the package name and version are sent.
+check = true
+budget_ms = 4000               # per-request timeout for registry calls
+
 [relevance]
 judge = "auto"                 # auto (LLM judge when an Anthropic key is set) | lexical | llm
 model = "claude-haiku-5-5"     # small, fast model, as the design calls for

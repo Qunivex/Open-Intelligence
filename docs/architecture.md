@@ -29,7 +29,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Start[User describes a goal] --> Intent[Skill: job to be done, constraints, ambiguities]
+    Start[User describes a goal] --> Intent[Skill: job to be done, constraints, ambiguities,<br/>versions the user accepts]
     Intent --> Caps[Must-have capabilities, per component]
     Caps --> Explore[search: explore vocabulary and candidates]
     Explore --> Find[find_reusable: one call per component]
@@ -39,10 +39,12 @@ flowchart TD
     Enrich --> Judge[Judge fit and must-have coverage]
     Judge --> Gates[Evidence gates, fail closed]
     Gates --> Score[Score, select top 3, decide the verdict]
-    Score --> Present[Agent presents the decision and its trace]
+    Score --> Packages[Look the picks up on their package registry]
+    Packages --> Present[Agent presents the decision and its trace]
     Present --> Approval{User approves integration?}
     Approval -- No --> Done[Stop; nothing installed]
-    Approval -- Yes --> Integrate[Integrate the exact version and revision]
+    Approval -- Yes --> How{Registry package or GitHub source?}
+    How --> Integrate[Integrate the exact version and revision]
     Integrate --> Outcome[report_outcome]
 ```
 
@@ -56,10 +58,11 @@ timeout or a retry belongs to one component.
 | Plan | chooses caller queries or the fallback | `clean_query`, `fallback_queries` |
 | Gather | runs everything in parallel, pools and de-duplicates, records what failed | `search`, `resolve`, `parse_ref` |
 | Metadata gates | drops candidates that fail, builds the shortlist | `metadata_gates` |
-| Enrich | enforces the time budget, records what did not finish | `enrich` |
+| Enrich | enforces the time budget, passes the caller's `ref_policy`, records what did not finish | `enrich` |
 | Judge | lexical judge, optional model judge, agreement bonus | `card` |
 | Evidence gates | turns unfinished checks into decisive gaps | `evidence_gates` |
 | Score | track record from the ledger, weighted total, selection, verdict | `assess` |
+| Package | bounds it in time, after the verdict; it cannot change the decision | `check_packages` |
 | Respond | the shared result and pick fields | `pick_details`, `brief` |
 
 The engine never names a host. Messages that do ("GitHub is not connected") come from the source through
@@ -75,12 +78,18 @@ Every pick has the same identity fields, whichever source produced it:
 | `provider`, `artifact_type` | the source's id and the kind of artifact |
 | `name`, `url` | canonical name and location |
 | `version`, `revision` | the pinned human-facing version and the immutable revision |
+| `version_kind` | what the version is: `release`, `prerelease`, `tag` or `branch` |
 | `license` | SPDX id as the host reports it; `null` when not established |
 | `summary`, `why`, `scores`, `gates` | the evidence behind the pick |
 | `unresolved_checks`, `integration_risks` | what stayed unknown, and what to watch |
 
-A source adds its own fields on top with `pick_details`. GitHub adds `get`, `ref_freshness`, `owner_tier`
-and `docs`. Unknown values stay unknown; an adapter must not fill a gap with a guess. Scores from
+A source adds its own fields on top with `pick_details`. GitHub adds `get`, `ref_freshness`, `owner_tier`,
+`docs` and `package`: whether the language's registry publishes the pick at its pinned version, filled by
+`check_packages` through `sources/packages.py`. That module reads the package's manifest at the pinned
+commit through a small `RepoFiles` interface (the root listing, the file tree for monorepos, one file's
+text), so another source can reuse it by implementing those three reads. It links a package to the
+repository by the registry's metadata or by the build attestation the registry holds (`attested`), and
+never verifies signatures itself. A source with nothing to look up makes `check_packages` a no-op. Unknown values stay unknown; an adapter must not fill a gap with a guess. Scores from
 different sources are not calibrated against each other and must not be compared as if they were.
 
 ## Adding a source

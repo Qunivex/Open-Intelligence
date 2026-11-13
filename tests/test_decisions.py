@@ -167,10 +167,10 @@ def _hang(engine: Engine, *slow: str) -> None:
     source = engine.sources["repository"]
     real = source.enrich
 
-    async def enrich(repo: Repo) -> DeepFacts:
+    async def enrich(repo: Repo, policy: GatePolicy) -> DeepFacts:
         if not slow or repo.full_name in slow:
             await asyncio.sleep(60)
-        return await real(repo)
+        return await real(repo, policy)
 
     source.enrich = enrich  # type: ignore[method-assign]
 
@@ -208,7 +208,7 @@ def test_one_timeout_keeps_a_positive_verdict_but_marks_the_evidence_partial(
 def test_rate_limited_evidence_pass_is_inconclusive(make_engine: Callable[..., Engine]) -> None:
     engine = make_engine(world_of(GATEWAY))
 
-    async def limited(repo: Repo) -> DeepFacts:
+    async def limited(repo: Repo, policy: GatePolicy) -> DeepFacts:
         raise RateLimited("GitHub rate limit reached")
 
     engine.sources["repository"].enrich = limited  # type: ignore[method-assign]
@@ -510,7 +510,7 @@ def test_unresolved_checks_and_integration_risks_are_reported_per_pick(
     assert "GPL-3.0 is strong copyleft" in risks
     # the fit gate passed only because there was nothing to compare: that is said, not implied
     assert "language fit not checked: no project language was given" in out["unresolved_checks"]
-    assert out["constraints"] == {"license_policy": "any_osi", "min_age_days": 30}
+    assert out["constraints"] == {"license_policy": "any_osi", "min_age_days": 30, "ref_policy": "standard"}
 
 
 def test_unread_readme_is_reported_and_blocks_a_build_verdict(make_engine: Callable[..., Engine]) -> None:
