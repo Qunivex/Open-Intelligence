@@ -64,3 +64,40 @@ def test_unknown_source_and_keys() -> None:
         settings_from_mapping({"sources": {"github": {"colour": "blue"}}})
     with pytest.raises(ConfigError, match="needs command"):
         settings_from_mapping({"sources": {"github": {"transport": "stdio"}}})
+
+
+def test_ranking_defaults_and_overrides() -> None:
+    defaults = settings_from_mapping({}).ranking
+    assert defaults.weights == {"fit": 0.40, "quality": 0.20, "health": 0.15, "trust": 0.15, "adoption": 0.10}
+    assert defaults.read_per_source == 8
+
+    custom = settings_from_mapping(
+        {
+            "ranking": {
+                "weights": {"fit": 3, "adoption": 0},
+                "read_per_source": 4,
+                "half_life_months": {"code": 12},
+            }
+        }
+    ).ranking
+    assert sum(custom.weights.values()) == pytest.approx(1.0)  # normalized
+    assert custom.weights["adoption"] == 0
+    assert custom.weights["fit"] > 0.8
+    assert custom.read_per_source == 4
+    assert custom.half_life_months["code"] == 12
+    assert custom.half_life_months["dataset"] == 60
+
+
+@pytest.mark.parametrize(
+    "ranking",
+    [
+        {"colour": "blue"},
+        {"weights": {"popularity": 1}},
+        {"weights": {"fit": -1}},
+        {"weights": {"fit": 0, "quality": 0, "health": 0, "trust": 0, "adoption": 0}},
+        {"half_life_months": {"code": 0}},
+    ],
+)
+def test_ranking_config_errors(ranking: dict[str, object]) -> None:
+    with pytest.raises(ConfigError):
+        settings_from_mapping({"ranking": ranking})

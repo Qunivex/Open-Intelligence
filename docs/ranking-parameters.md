@@ -1,8 +1,12 @@
 # Ranking parameters: research notes
 
-Status: **research, not implemented.** The MVP finds and fetches candidates and returns them in each
-platform's own order. This document collects the parameters worth researching before we pick the top 3
-open-source projects, models and datasets for a use case, and how to test whether a ranking is any good.
+Status: **a first version of the pipeline in section 9 is built** (`src/open_intelligence/ranking/`, tool
+`find_top_picks`). It follows the decisions recorded in section 11. Its weights and thresholds are a first
+hypothesis: the evaluation in section 10 that would calibrate them is **not built yet**. Section 13 lists
+what the first version does, what it leaves out, and what running it against the live servers showed.
+
+This document collects the parameters behind picking the top 3 open-source projects, models and datasets
+for a use case, and how to test whether a ranking is any good.
 
 Facts marked *(observed)* were seen on the live official MCP servers on 2026-11-13.
 
@@ -189,7 +193,12 @@ One query sorted by popularity misses good fits that use different words. Things
 4. Pick a diverse top 3 and attach, to each pick, the parameters that put it there and the checks that
    could not be made.
 
+Built as described: see section 13. The weights can be changed under `[ranking]` in the config file.
+
 ## 10. How to tell whether a ranking is good
+
+Not built yet. Every result already carries `platform_top` (what the platform's own order put first), which
+is the baseline this evaluation needs.
 
 - **A golden set.** 30 to 50 real tasks per type (repository, model, dataset), each with picks that
   practitioners judged acceptable, good or best.
@@ -200,14 +209,25 @@ One query sorted by popularity misses good fits that use different words. Things
 - **Outcomes.** After an agent builds on a pick, record whether it worked. Over time this is the most
   honest signal there is.
 
-## 11. Open questions
+## 11. Decisions on the open questions
 
-- Which task-specific benchmark sources can be trusted and queried, now that leaderboards are fragmented?
-- How to normalize adoption fairly between a niche task (hundreds of downloads) and a popular one (millions)?
-- How to detect inflated popularity on Hugging Face and Kaggle, as StarScout does for GitHub stars?
-- How much of fit can be judged from metadata alone, and when must the agent read the README or card?
-- How to weigh a license that is unclear rather than clearly incompatible?
-- How should the user's constraints be collected: asked up front, or inferred from their project files?
+Decided by the project owner on 2026-11-13. Each is the first thing to revisit when the evaluation exists.
+
+| question | decision | how it is built |
+| --- | --- | --- |
+| Which benchmark source for model quality? | The eval results a model's own card declares | `model-index` in the card is read; results verified by Hugging Face count more than self-reported ones; results mentioned only in the card's text count less; none counts least. Values are shown, not compared across models. |
+| How to normalize adoption? | Rank within the candidates found | Percentile of each count among the candidates found on the same source for the same need. |
+| How to handle inflated popularity? | Cross-check signals and damp | When independent signals disagree (many downloads, almost no likes; many stars, almost no forks) the adoption score is halved and the pick carries a warning. |
+| How deeply to read for fit? | Read the shortlist | Every candidate is scored from search metadata; the best 8 per need and source get their README or card (and, for models, file list) read and are scored again. A second batch is read when gates remove most of the first. |
+| An unclear license? | Penalize and flag | It stays eligible, loses trust score, and the pick lists the license as an unresolved check. A license that is clearly incompatible with the constraints is a gate. |
+| How to collect constraints? | The agent infers them and asks only for gaps | `find_top_picks` takes `constraints`; the result lists every assumption made and, under `questions_for_user`, only the questions whose answer would change the result. |
+
+Still open:
+
+- How to detect inflated popularity with more than a ratio check (account age, velocity), as StarScout does.
+- Whether adoption needs an absolute floor (see section 13, "what the live runs showed").
+- Which task leaderboards to add once card evals prove too thin, and how to map a task to a leaderboard.
+- How to judge fit by meaning instead of by words.
 
 ## 12. Where each signal comes from
 
@@ -224,3 +244,82 @@ One query sorted by popularity misses good fits that use different words. Things
 | Kaggle model variations, notebook count | Kaggle `list_models`, `get_model` | |
 | Kaggle notebooks, competitions, write-ups | Kaggle `search_notebooks`, `get_writeup` (token needed) | |
 | Task leaderboards and evals | partly in model cards | leaderboard datasets on the Hub |
+
+## 13. The first version: what it does, what it leaves out, what it showed
+
+Code: `src/open_intelligence/ranking/` (`adapters.py` reads each platform's results, `scoring.py` holds the
+gates and scores, `engine.py` runs the pipeline). Tool: `find_top_picks`. Command: `open-intelligence picks`.
+
+### What it does
+
+**Candidates.** Up to three phrasings per need. For the first phrasing each source is asked twice: in its
+default order and in one popularity order (GitHub stars, Hugging Face downloads, Kaggle notebook count), so
+popular work is considered without being ranked by popularity. Results are merged and de-duplicated.
+
+**Gates** (a failed gate removes the candidate; `rejected` in the result says which and why):
+
+| gate | removes | needs |
+| --- | --- | --- |
+| archived | archived or disabled repositories | search metadata |
+| license | non-commercial licenses when `commercial_use` is true; GPL-style when `copyleft_ok` is false | search metadata |
+| age | anything older than `max_age_months` | search metadata |
+| weights | models whose only weights are pickle files, unless `allow_pickle_weights` | the file list |
+| size | models larger than `max_model_size_gb` | the file list |
+| gated | models and datasets that need an access request, when `allow_gated` is false | a failed read |
+| fit | fit below 0.3, or none of the must-haves covered | the README or card |
+
+**Scores** (each 0 to 1; unknown counts as 0.5 and is listed under `unresolved_checks`):
+
+| part | weight | repositories | models | datasets |
+| --- | --- | --- | --- | --- |
+| fit | 40% | words of the must-haves (or of the best-matching phrasing) found in name, description, topics, README; programming language | same, in name, tags, task, card; ML library; natural language | same; natural language |
+| quality | 20% | README length, install and usage instructions, releases, signs of tests or CI | eval results in the card (verified, self-reported, prose only, none); card sections | card sections and metadata (Hugging Face); usability rating and description (Kaggle) |
+| health | 15% | time since last push and since last release (half-life 18 months) | time since last update (30 months) | time since last update (60 months) |
+| trust | 15% | license kind; fork or original | license kind; original or conversion; safetensors / GGUF / ONNX weights; custom code | license kind |
+| adoption | 10% | stars, forks | downloads in 30 days, likes (Hugging Face); votes (Kaggle) | downloads, likes (Hugging Face); notebooks, downloads, votes (Kaggle) |
+
+**Top 3.** Best score first. A conversion or adapter of a model, a fork, or a same-named re-upload is not a
+separate option: it is listed under the pick it duplicates (`also_available_as`). Two fine-tunes of one base
+model can both appear, with a small penalty for the second.
+
+**Output per pick.** Score and its five parts, the reasons behind them, must-haves covered and missing,
+facts (license, dates, size, eval results), warnings, unresolved checks, and where the platform's own order
+had it.
+
+### What it leaves out
+
+- **GitHub is not verified against the live server.** That needs a token. Its parser follows the result
+  types in GitHub's documentation and is tested against hand-written fixtures only.
+- **Repositories:** no OpenSSF Scorecard, security advisories, dependents or package downloads (they need
+  sources other than the three MCP servers, or a package name). Issue response times and contributor
+  counts are not read. Tests and CI are inferred from the README.
+- **Models:** eval values are shown but not compared between models. No benchmark-contamination check, no
+  "superseded by a newer version" check. Kaggle does not report weight formats.
+- **Datasets:** nothing about label quality, duplicates, personal data or schema match. Croissant metadata
+  is not read.
+- **Notebooks:** searched and listed by votes only, with field names assumed from Kaggle's API; this path
+  needs a Kaggle token and has not been run live.
+- **Candidate generation:** platform filters and expansion (a base model's fine-tunes, a library's
+  dependents) are not used. Duplicates across platforms are caught by name only.
+- **Evaluation** (section 10): no golden set, no metrics. The weights are unproven.
+
+### What the live runs showed (2026-11-13)
+
+- **Several phrasings matter more than any score.** For a German NER dataset, Hugging Face's first three
+  results for "german ner" were community datasets with 14 to 62 downloads. With the phrasings "german ner",
+  "german named entity recognition" and "germeval", the top pick was `GermanEval/germeval_14`, the standard
+  benchmark, which the first search does not return at all.
+- **Conversions crowd the default order.** Hugging Face's first result for "sentiment" was a JavaScript
+  conversion of a financial-news model. The pipeline lists it under the original instead.
+- **The inflation check fires on real data.** A sentiment model with 3.4M downloads in 30 days and 13 likes
+  was flagged; the most-downloaded honest model in the same list has 2.4M downloads and 857 likes.
+- **Ranking adoption only within candidates lets a weak source place a pick.** Kaggle Models candidates for
+  "sentiment" have 4 to 8 votes each, so a model with 8 votes scores "typical" and can reach the top 3. An
+  absolute floor (the "blend of both" option) would fix this; adoption is 10% of the score, which bounds it.
+- **The pickle-only gate removes known, widely used older models** (for example
+  `j-hartmann/sentiment-roberta-large-english-3-classes`). That is the gate working as specified; the result
+  lists them under `rejected` and `allow_pickle_weights` brings them back.
+- **Fit is lexical.** A financial-news sentiment model covered the must-haves "sentiment classification" and
+  "english" for a product-review task. Must-haves have to name the domain ("product reviews") to exclude it.
+- **Hugging Face answers in Markdown written for a model to read.** The parsers for it are the part most
+  likely to break; `pytest -m live` checks them against the real server.

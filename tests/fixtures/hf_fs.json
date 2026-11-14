@@ -1,0 +1,719 @@
+{
+ "cat hf://models/Xenova/distilroberta-finetuned-financial-news-sentiment-analysis/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/Xenova/distilroberta-finetuned-financial-news-sentiment-analysis/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nbase_model: mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis\nlibrary_name: transformers.js\n---\n\nhttps://huggingface.co/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis with ONNX weights to be compatible with Transformers.js.\n\n## Usage (Transformers.js)\n\nIf you haven't already, you can install the [Transformers.js](https://huggingface.co/docs/transformers.js) JavaScript library from [NPM](https://www.npmjs.com/package/@huggingface/transformers) using:\n```bash\nnpm i @huggingface/transformers\n```\n\n**Example:** Text Classification\n\n```js\nimport { pipeline } from '@huggingface/transformers';\n\nconst classifier = await pipeline('text-classification', 'Xenova/distilroberta-finetuned-financial-news-sentiment-analysis');\nconst output = await classifier('I love transformers!');\n```\n\nNote: Having a separate repo for ONNX weights is intended to be a temporary solution until WebML gains more traction. If you would like to make your models web-ready, we recommend converting to ONNX using [🤗 Optimum](https://huggingface.co/docs/optimum/index) and structuring your repo like this one (with ONNX weights located in a subfolder named `onnx`).",
+   "bytes": 1180,
+   "truncated": false
+  }
+ },
+ "ls hf://models/Xenova/distilroberta-finetuned-financial-news-sentiment-analysis": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/Xenova/distilroberta-finetuned-financial-news-sentiment-analysis",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "dir",
+     "path": "onnx"
+    },
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1519
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 1180
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 952
+    },
+    {
+     "type": "file",
+     "path": "merges.txt",
+     "size": 456318
+    },
+    {
+     "type": "file",
+     "path": "quantize_config.json",
+     "size": 882
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 280
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 2108717
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 459
+    },
+    {
+     "type": "file",
+     "path": "vocab.json",
+     "size": 798293
+    }
+   ]
+  }
+ },
+ "cat hf://models/kinit/slovakbert-sentiment-twitter/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/kinit/slovakbert-sentiment-twitter/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlanguage:\n- sk\ntags:\n- twitter\n- sentiment-analysis\nlicense: cc-by-4.0\nmetrics:\n- f1\nwidget:\n- text: >-\n    Najkrajšia vianočná reklama: Toto milé video vám vykúzli čarovnú atmosféru:\n    Vianoce sa nezadržateľne blížia.\n- text: A opäť sa objavili nebezpečné výrobky. Pozrite sa, či ich nemáte doma\n---\n\n\n# Sentiment Analysis model based on SlovakBERT\n\nThis is a sentiment analysis classifier based on [SlovakBERT](https://huggingface.co/gerulata/slovakbert). The model can distinguish three level of sentiment:\n\n- `-1` - Negative sentiment\n- `0` - Neutral sentiment\n- `1` - Positive setiment\n\nThe model was fine-tuned using Slovak part of [Multilingual Twitter Sentiment Analysis Dataset](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0155036) [Mozetič et al 2016] containing 50k manually annotated Slovak tweets. As such, it is fine-tuned for tweets and it is not advised to use the model for general-purpose sentiment analysis.\n\n## Results\n\nThe model was evaluated in [our paper](https://arxiv.org/abs/2109.15254) [Pikuliak et al 2021, Section 4.4]. It achieves \\\\(0.67\\\\) F1-score on the original dataset and \\\\(0.58\\\\) F1-score on general reviews dataset.\n\n## Cite\n\n```\n@inproceedings{pikuliak-etal-2022-slovakbert,\n    title = \"{S}lovak{BERT}: {S}lovak Masked Language Model\",\n    author = \"Pikuliak, Mat{\\'u}{\\v{s}}  and\n      Grivalsk{\\'y}, {\\v{S}}tefan  and\n      Kon{\\^o}pka, Martin  and\n      Bl{\\v{s}}t{\\'a}k, Miroslav  and\n      Tamajka, Martin  and\n      Bachrat{\\'y}, Viktor  and\n      Simko, Marian  and\n      Bal{\\'a}{\\v{z}}ik, Pavol  and\n      Trnka, Michal  and\n      Uhl{\\'a}rik, Filip\",\n    booktitle = \"Findings of the Association for Computational Linguistics: EMNLP 2022\",\n    month = dec,\n    year = \"2022\",\n    address = \"Abu Dhabi, United Arab Emirates\",\n    publisher = \"Association for Computational Linguistics\",\n    url = \"https://aclanthology.org/2022.findings-emnlp.530\",\n    pages = \"7156--7168\",\n    abstract = \"We introduce a new Slovak masked language model called \\textit{SlovakBERT}. This is to our best knowledge the first paper discussing Slovak transformers-based language models. We evaluate our model on several NLP tasks and achieve state-of-the-art results. This evaluation is likewise the first attempt to establish a benchmark for Slovak language models. We publish the masked language model, as well as the fine-tuned models for part-of-speech tagging, sentiment analysis and semantic textual similarity.\",",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/kinit/slovakbert-sentiment-twitter": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/kinit/slovakbert-sentiment-twitter",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1175
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 2507
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 873
+    },
+    {
+     "type": "file",
+     "path": "merges.txt",
+     "size": 532966
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 498673997,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 772
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 1508602
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 1124
+    },
+    {
+     "type": "file",
+     "path": "vocab.json",
+     "size": 874618
+    }
+   ]
+  }
+ },
+ "cat hf://models/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: apache-2.0\nthumbnail: https://huggingface.co/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis/resolve/main/logo_no_bg.png\ntags:\n- generated_from_trainer\n- financial\n- stocks\n- sentiment\nwidget:\n- text: \"Operating profit totaled EUR 9.4 mn , down from EUR 11.7 mn in 2004 .\"\ndatasets:\n- financial_phrasebank\nmetrics:\n- accuracy\nmodel-index:\n- name: distilRoberta-financial-sentiment\n  results:\n  - task:\n      name: Text Classification\n      type: text-classification\n    dataset:\n      name: financial_phrasebank\n      type: financial_phrasebank\n      args: sentences_allagree\n    metrics:\n    - name: Accuracy\n      type: accuracy\n      value: 0.9823008849557522\n---\n\n<!-- This model card has been generated automatically according to the information the Trainer had access to. You\nshould probably proofread and complete it, then remove this comment. -->\n\n\n<div style=\"text-align:center;width:250px;height:250px;\">\n    <img src=\"https://huggingface.co/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis/resolve/main/logo_no_bg.png\" alt=\"logo\">\n</div>\n\n\n# DistilRoberta-financial-sentiment\n\n\nThis model is a fine-tuned version of [distilroberta-base](https://huggingface.co/distilroberta-base) on the financial_phrasebank dataset.\nIt achieves the following results on the evaluation set:\n- Loss: 0.1116\n- Accuracy: **0.98**23\n\n## Base Model description\n\nThis model is a distilled version of the [RoBERTa-base model](https://huggingface.co/roberta-base). It follows the same training procedure as [DistilBERT](https://huggingface.co/distilbert-base-uncased).\nThe code for the distillation process can be found [here](https://github.com/huggingface/transformers/tree/master/examples/distillation).\nThis model is case-sensitive: it makes a difference between English and English.\n\nThe model has 6 layers, 768 dimension and 12 heads, totalizing 82M parameters (compared to 125M parameters for RoBERTa-base).\nOn average DistilRoBERTa is twice as fast as Roberta-base.\n\n## Training Data\n\nPolar sentiment dataset of sentences from financial news. The dataset consists of 4840 sentences from English language financial news categorised by sentiment. The dataset is divided by agreement rate of 5-8 annotators.\n\n## Training procedure\n\n### Training hyperparameters\n\nThe following hyperparameters were used during training:\n- learning_rate: 2e-05\n- train_batch_size: 8\n- eval_batch_size: 8\n- seed: 42\n- optimizer: Adam with betas=(0.9,0.999) and epsilon=1e-08\n- lr_s",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "dir",
+     "path": "runs"
+    },
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1229
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 3103
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 933
+    },
+    {
+     "type": "file",
+     "path": "logo_no_bg.png",
+     "size": 178288
+    },
+    {
+     "type": "file",
+     "path": "merges.txt",
+     "size": 456356
+    },
+    {
+     "type": "file",
+     "path": "model.safetensors",
+     "size": 328499560,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 328529005,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 239
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 1355932
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 333
+    },
+    {
+     "type": "file",
+     "path": "training_args.bin",
+     "size": 2735,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "vocab.json",
+     "size": 798293
+    }
+   ]
+  }
+ },
+ "cat hf://models/cardiffnlp/twitter-roberta-base-sentiment-latest/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-roberta-base-sentiment-latest/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlanguage: en\nwidget:\n- text: Covid cases are increasing fast!\ndatasets:\n- tweet_eval\nlicense: cc-by-4.0\n---\n\n\n# Twitter-roBERTa-base for Sentiment Analysis - UPDATED (2022)\n\nThis is a RoBERTa-base model trained on ~124M tweets from January 2018 to December 2021, and finetuned for sentiment analysis with the TweetEval benchmark. \nThe original Twitter-based RoBERTa model can be found [here](https://huggingface.co/cardiffnlp/twitter-roberta-base-2021-124m) and the original reference paper is [TweetEval](https://github.com/cardiffnlp/tweeteval). This model is suitable for English. \n\n- Reference Paper: [TimeLMs paper](https://arxiv.org/abs/2202.03829). \n- Git Repo: [TimeLMs official repository](https://github.com/cardiffnlp/timelms).\n\n<b>Labels</b>: \n0 -> Negative;\n1 -> Neutral;\n2 -> Positive\n\nThis sentiment analysis model has been integrated into [TweetNLP](https://github.com/cardiffnlp/tweetnlp). You can access the demo [here](https://tweetnlp.org).\n\n## Example Pipeline\n```python\nfrom transformers import pipeline\nsentiment_task = pipeline(\"sentiment-analysis\", model=model_path, tokenizer=model_path)\nsentiment_task(\"Covid cases are increasing fast!\")\n```\n```\n[{'label': 'Negative', 'score': 0.7236}]\n```\n\n## Full classification example\n\n```python\nfrom transformers import AutoModelForSequenceClassification\nfrom transformers import TFAutoModelForSequenceClassification\nfrom transformers import AutoTokenizer, AutoConfig\nimport numpy as np\nfrom scipy.special import softmax\n# Preprocess text (username and link placeholders)\ndef preprocess(text):\n    new_text = []\n    for t in text.split(\" \"):\n        t = '@user' if t.startswith('@') and len(t) > 1 else t\n        t = 'http' if t.startswith('http') else t\n        new_text.append(t)\n    return \" \".join(new_text)\nMODEL = f\"cardiffnlp/twitter-roberta-base-sentiment-latest\"\ntokenizer = AutoTokenizer.from_pretrained(MODEL)\nconfig = AutoConfig.from_pretrained(MODEL)\n# PT\nmodel = AutoModelForSequenceClassification.from_pretrained(MODEL)\n#model.save_pretrained(MODEL)\ntext = \"Covid cases are increasing fast!\"\ntext = preprocess(text)\nencoded_input = tokenizer(text, return_tensors='pt')\noutput = model(**encoded_input)\nscores = output[0][0].detach().numpy()\nscores = softmax(scores)\n# # TF\n# model = TFAutoModelForSequenceClassification.from_pretrained(MODEL)\n# model.save_pretrained(MODEL)\n# text = \"Covid cases are increasing fast!\"\n# encoded_input = tokenizer(text, return_tensors='tf')\n# output = model(encoded_input)\n# scores = ",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/cardiffnlp/twitter-roberta-base-sentiment-latest": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-roberta-base-sentiment-latest",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1175
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 4328
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 929
+    },
+    {
+     "type": "file",
+     "path": "merges.txt",
+     "size": 456318
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 501045531,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 239
+    },
+    {
+     "type": "file",
+     "path": "tf_model.h5",
+     "size": 498845224,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "vocab.json",
+     "size": 898822
+    }
+   ]
+  }
+ },
+ "cat hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\ndatasets:\n- cardiffnlp/tweet_sentiment_multilingual\nmetrics:\n- f1\n- accuracy\nmodel-index:\n- name: cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual\n  results:\n  - task:\n      type: text-classification\n      name: Text Classification\n    dataset:\n      name: cardiffnlp/tweet_sentiment_multilingual\n      type: all\n      split: test \n    metrics:\n    - name: Micro F1 (cardiffnlp/tweet_sentiment_multilingual/all)\n      type: micro_f1_cardiffnlp/tweet_sentiment_multilingual/all\n      value: 0.6931034482758621\n    - name: Macro F1 (cardiffnlp/tweet_sentiment_multilingual/all)\n      type: micro_f1_cardiffnlp/tweet_sentiment_multilingual/all\n      value: 0.692628774202147\n    - name: Accuracy (cardiffnlp/tweet_sentiment_multilingual/all)\n      type: accuracy_cardiffnlp/tweet_sentiment_multilingual/all\n      value: 0.6931034482758621\npipeline_tag: text-classification\nwidget:\n- text: Get the all-analog Classic Vinyl Edition of \"Takin Off\" Album from {@herbiehancock@} via {@bluenoterecords@} link below {{URL}}\n  example_title: \"topic_classification 1\" \n- text: Yes, including Medicare and social security saving👍\n  example_title: \"sentiment 1\" \n- text: All two of them taste like ass.\n  example_title: \"offensive 1\" \n- text: If you wanna look like a badass, have drama on social media\n  example_title: \"irony 1\" \n- text: Whoever just unfollowed me you a bitch\n  example_title: \"hate 1\" \n- text: I love swimming for the same reason I love meditating...the feeling of weightlessness.\n  example_title: \"emotion 1\" \n- text: Beautiful sunset last night from the pontoon @TupperLakeNY\n  example_title: \"emoji 1\" \n---\n# cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual \n\nThis model is a fine-tuned version of [cardiffnlp/twitter-xlm-roberta-base](https://huggingface.co/cardiffnlp/twitter-xlm-roberta-base) on the \n[`cardiffnlp/tweet_sentiment_multilingual (all)`](https://huggingface.co/datasets/cardiffnlp/tweet_sentiment_multilingual) \nvia [`tweetnlp`](https://github.com/cardiffnlp/tweetnlp).\nTraining split is `train` and parameters have been tuned on the validation split `validation`.\n\nFollowing metrics are achieved on the test split `test` ([link](https://huggingface.co/cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual/raw/main/metric.json)).\n\n- F1 (micro): 0.6931034482758621\n- F1 (macro): 0.692628774202147\n- Accuracy: 0.6931034482758621\n\n### Usage\nInstall tweetnlp via pip.\n```shell\npip install tweetnlp\n```\nLoad the model in python.\n```python\nimport tw",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1528
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 3578
+    },
+    {
+     "type": "file",
+     "path": "best_run_hyperparameters.json",
+     "size": 97
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 982
+    },
+    {
+     "type": "file",
+     "path": "metric.json",
+     "size": 231
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 1112257205,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "sentencepiece.bpe.model",
+     "size": 5069051,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 280
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 17082925,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 443
+    }
+   ]
+  }
+ },
+ "cat hf://models/Arunavaonly/Bangla-twoclass-Sentiment-Analyzer/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/Arunavaonly/Bangla-twoclass-Sentiment-Analyzer/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: mit\nbase_model: xlm-roberta-base\ntags:\n- generated_from_trainer\nmetrics:\n- f1\nmodel-index:\n- name: Bangla-Twoclass-Sentiment-Analyzer\n  results: []\n---\n\n<!-- This model card has been generated automatically according to the information the Trainer had access to. You\nshould probably proofread and complete it, then remove this comment. -->\n\n# Bangla-Twoclass-Sentiment-Analyzer\n\nThis model is a fine-tuned version of [xlm-roberta-base](https://huggingface.co/xlm-roberta-base) on the None dataset.\nIt achieves the following results on the evaluation set:\n- Loss: 2.7755\n- F1: 0.6113\n\n## Model description\n\nMore information needed\n\n## Intended uses & limitations\n\nMore information needed\n\n## Training and evaluation data\n\nMore information needed\n\n## Training procedure\n\n### Training hyperparameters\n\nThe following hyperparameters were used during training:\n- learning_rate: 3e-05\n- train_batch_size: 16\n- eval_batch_size: 16\n- seed: 42\n- optimizer: Adam with betas=(0.9,0.999) and epsilon=1e-08\n- lr_scheduler_type: linear\n- training_steps: 1800\n- mixed_precision_training: Native AMP\n\n### Training results\n\n| Training Loss | Epoch | Step | Validation Loss | F1     |\n|:-------------:|:-----:|:----:|:---------------:|:------:|\n| No log        | 2.53  | 200  | 0.9869          | 0.4635 |\n| No log        | 5.06  | 400  | 0.8978          | 0.5858 |\n| 0.8692        | 7.59  | 600  | 1.1978          | 0.6149 |\n| 0.8692        | 10.13 | 800  | 1.5145          | 0.6112 |\n| 0.3138        | 12.66 | 1000 | 2.0353          | 0.6041 |\n| 0.3138        | 15.19 | 1200 | 2.4316          | 0.6203 |\n| 0.3138        | 17.72 | 1400 | 2.6025          | 0.6002 |\n| 0.0769        | 20.25 | 1600 | 2.6247          | 0.6082 |\n| 0.0769        | 22.78 | 1800 | 2.7755          | 0.6113 |\n\n\n### Framework versions\n\n- Transformers 4.37.2\n- Pytorch 2.1.0+cu121\n- Datasets 2.17.1\n- Tokenizers 0.15.2\n",
+   "bytes": 1888,
+   "truncated": false
+  }
+ },
+ "ls hf://models/Arunavaonly/Bangla-twoclass-Sentiment-Analyzer": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/Arunavaonly/Bangla-twoclass-Sentiment-Analyzer",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "dir",
+     "path": "runs"
+    },
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1570
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 1888
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 924
+    },
+    {
+     "type": "file",
+     "path": "model.safetensors",
+     "size": 1112208084,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 1112249713,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "sentencepiece.bpe.model",
+     "size": 5069051,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 280
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 17082854,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 1147
+    },
+    {
+     "type": "file",
+     "path": "training_args.bin",
+     "size": 4728,
+     "lfs": true
+    }
+   ]
+  }
+ },
+ "cat hf://models/lxyuan/distilbert-base-multilingual-cased-sentiments-student/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/lxyuan/distilbert-base-multilingual-cased-sentiments-student/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: apache-2.0\ntags:\n- sentiment-analysis\n- text-classification\n- zero-shot-distillation\n- distillation\n- zero-shot-classification\n- debarta-v3\nmodel-index:\n- name: distilbert-base-multilingual-cased-sentiments-student\n  results: []\ndatasets:\n- tyqiangz/multilingual-sentiments\nlanguage:\n- en\n- ar\n- de\n- es\n- fr\n- ja\n- zh\n- id\n- hi\n- it\n- ms\n- pt\n---\n\n<!-- This model card has been generated automatically according to the information the Trainer had access to. You\nshould probably proofread and complete it, then remove this comment. -->\n\n# distilbert-base-multilingual-cased-sentiments-student\n\nThis model is distilled from the zero-shot classification pipeline on the Multilingual Sentiment \ndataset using this [script](https://github.com/huggingface/transformers/tree/main/examples/research_projects/zero-shot-distillation). \n\nIn reality the multilingual-sentiment dataset is annotated of course, \nbut we'll pretend and ignore the annotations for the sake of example.\n\n\n    Teacher model: MoritzLaurer/mDeBERTa-v3-base-mnli-xnli\n    Teacher hypothesis template: \"The sentiment of this text is {}.\"\n    Student model: distilbert-base-multilingual-cased\n\n\n## Inference example\n\n```python\nfrom transformers import pipeline\n\ndistilled_student_sentiment_classifier = pipeline(\n    model=\"lxyuan/distilbert-base-multilingual-cased-sentiments-student\", \n    return_all_scores=True\n)\n\n# english\ndistilled_student_sentiment_classifier (\"I love this movie and i would watch it again and again!\")\n>> [[{'label': 'positive', 'score': 0.9731044769287109},\n  {'label': 'neutral', 'score': 0.016910076141357422},\n  {'label': 'negative', 'score': 0.009985478594899178}]]\n\n# malay\ndistilled_student_sentiment_classifier(\"Saya suka filem ini dan saya akan menontonnya lagi dan lagi!\")\n[[{'label': 'positive', 'score': 0.9760093688964844},\n  {'label': 'neutral', 'score': 0.01804516464471817},\n  {'label': 'negative', 'score': 0.005945465061813593}]]\n\n# japanese\ndistilled_student_sentiment_classifier(\"私はこの映画が大好きで、何度も見ます！\")\n>> [[{'label': 'positive', 'score': 0.9342429041862488},\n  {'label': 'neutral', 'score': 0.040193185210227966},\n  {'label': 'negative', 'score': 0.025563929229974747}]]\n\n\n```\n\n\n## Training procedure\n\nNotebook link: [here](https://github.com/LxYuan0420/nlp/blob/main/notebooks/Distilling_Zero_Shot_multilingual_distilbert_sentiments_student.ipynb)\n\n### Training hyperparameters\n\nResult can be reproduce using the following commands:\n\n```bash\np",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/lxyuan/distilbert-base-multilingual-cased-sentiments-student": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/lxyuan/distilbert-base-multilingual-cased-sentiments-student",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "dir",
+     "path": "onnx"
+    },
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 1477
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 5771
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 759
+    },
+    {
+     "type": "file",
+     "path": "model.safetensors",
+     "size": 541320452,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 541343405,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 125
+    },
+    {
+     "type": "file",
+     "path": "tokenizer.json",
+     "size": 2919615
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 373
+    },
+    {
+     "type": "file",
+     "path": "training_args.bin",
+     "size": 3643,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "vocab.txt",
+     "size": 995526
+    }
+   ]
+  }
+ },
+ "cat hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlanguage: multilingual\nwidget:\n- text: \"🤗\"\n- text: \"T'estimo! ❤️\"\n- text: \"I love you!\"\n- text: \"I hate you 🤮\"\n- text: \"Mahal kita!\"\n- text: \"사랑해!\"\n- text: \"난 너가 싫어\"\n- text: \"😍😍😍\"\n---\n\n\n# twitter-XLM-roBERTa-base for Sentiment Analysis\n\nThis is a multilingual XLM-roBERTa-base model trained on ~198M tweets and finetuned for sentiment analysis. The sentiment fine-tuning was done on 8 languages (Ar, En, Fr, De, Hi, It, Sp, Pt) but it can be used for more languages (see paper for details).\n\n- Paper: [XLM-T: A Multilingual Language Model Toolkit for Twitter](https://arxiv.org/abs/2104.12250). \n- Git Repo: [XLM-T official repository](https://github.com/cardiffnlp/xlm-t).\n\nThis model has been integrated into the [TweetNLP library](https://github.com/cardiffnlp/tweetnlp).\n\n## Example Pipeline\n```python\nfrom transformers import pipeline\nmodel_path = \"cardiffnlp/twitter-xlm-roberta-base-sentiment\"\nsentiment_task = pipeline(\"sentiment-analysis\", model=model_path, tokenizer=model_path)\nsentiment_task(\"T'estimo!\")\n```\n```\n[{'label': 'Positive', 'score': 0.6600581407546997}]\n```\n\n## Full classification example\n\n```python\nfrom transformers import AutoModelForSequenceClassification\nfrom transformers import TFAutoModelForSequenceClassification\nfrom transformers import AutoTokenizer, AutoConfig\nimport numpy as np\nfrom scipy.special import softmax\n\n# Preprocess text (username and link placeholders)\ndef preprocess(text):\n    new_text = []\n    for t in text.split(\" \"):\n        t = '@user' if t.startswith('@') and len(t) > 1 else t\n        t = 'http' if t.startswith('http') else t\n        new_text.append(t)\n    return \" \".join(new_text)\n\nMODEL = f\"cardiffnlp/twitter-xlm-roberta-base-sentiment\"\n\ntokenizer = AutoTokenizer.from_pretrained(MODEL)\nconfig = AutoConfig.from_pretrained(MODEL)\n\n# PT\nmodel = AutoModelForSequenceClassification.from_pretrained(MODEL)\nmodel.save_pretrained(MODEL)\n\ntext = \"Good night 😊\"\ntext = preprocess(text)\nencoded_input = tokenizer(text, return_tensors='pt')\noutput = model(**encoded_input)\nscores = output[0][0].detach().numpy()\nscores = softmax(scores)\n\n# # TF\n# model = TFAutoModelForSequenceClassification.from_pretrained(MODEL)\n# model.save_pretrained(MODEL)\n\n# text = \"Good night 😊\"\n# encoded_input = tokenizer(text, return_tensors='tf')\n# output = model(encoded_input)\n# scores = output[0][0].numpy()\n# scores = softmax(scores)\n\n# Print labels and scores\nranking = np.argsort(scores)\nranking = ranking[::-1]\nfor ",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "ls hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/cardiffnlp/twitter-xlm-roberta-base-sentiment",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 690
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 3290
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 841
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 1112271561,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "sentencepiece.bpe.model",
+     "size": 5069051,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 150
+    },
+    {
+     "type": "file",
+     "path": "tf_model.h5",
+     "size": 1114822968,
+     "lfs": true
+    }
+   ]
+  }
+ },
+ "cat hf://models/nlptown/bert-base-multilingual-uncased-sentiment/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/nlptown/bert-base-multilingual-uncased-sentiment/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlanguage:\n- en\n- nl\n- de\n- fr\n- it\n- es\n\nlicense: mit\n---\n\n# bert-base-multilingual-uncased-sentiment\n\nVisit the [NLP Town website](https://www.nlp.town) for an updated version of this model, with a 40% error reduction on product reviews.\n\nThis is a bert-base-multilingual-uncased model finetuned for sentiment analysis on product reviews in six languages: English, Dutch, German, French, Spanish, and Italian. It predicts the sentiment of the review as a number of stars (between 1 and 5).\n\nThis model is intended for direct use as a sentiment analysis model for product reviews in any of the six languages above or for further finetuning on related sentiment analysis tasks.\n\n## Training data\n\nHere is the number of product reviews we used for finetuning the model: \n\n| Language | Number of reviews |\n| -------- | ----------------- |\n| English  | 150k           |\n| Dutch    | 80k            |\n| German   | 137k           |\n| French   | 140k           |\n| Italian  | 72k            |\n| Spanish  | 50k            |\n\n## Accuracy\n\nThe fine-tuned model obtained the following accuracy on 5,000 held-out product reviews in each of the languages:\n\n- Accuracy (exact) is the exact match for the number of stars.\n- Accuracy (off-by-1) is the percentage of reviews where the number of stars the model predicts differs by a maximum of 1 from the number given by the human reviewer. \n\n\n| Language | Accuracy (exact) | Accuracy (off-by-1) |\n| -------- | ---------------------- | ------------------- |\n| English  | 67%                 | 95%\n| Dutch    | 57%                 | 93%\n| German   | 61%                 | 94%\n| French   | 59%                 | 94%\n| Italian  | 59%                 | 95%\n| Spanish  | 58%                 | 95%\n\n## Contact \n\nIn addition to this model, [NLP Town](http://nlp.town) offers custom models for many languages and NLP tasks.\n\nIf you found this model useful, you can [buy us a coffee](https://www.buymeacoffee.com/yvespeirsman).\n\nFeel free to contact us for questions, feedback and/or requests for similar models.",
+   "bytes": 2040,
+   "truncated": false
+  }
+ },
+ "ls hf://models/nlptown/bert-base-multilingual-uncased-sentiment": {
+  "status": "success",
+  "result": {
+   "uri": "hf://models/nlptown/bert-base-multilingual-uncased-sentiment",
+   "op": "ls",
+   "entries": [
+    {
+     "type": "file",
+     "path": ".gitattributes",
+     "size": 445
+    },
+    {
+     "type": "file",
+     "path": "README.md",
+     "size": 2040
+    },
+    {
+     "type": "file",
+     "path": "config.json",
+     "size": 953
+    },
+    {
+     "type": "file",
+     "path": "flax_model.msgpack",
+     "size": 669448262,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "model.safetensors",
+     "size": 669464588,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "pytorch_model.bin",
+     "size": 669491321,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "special_tokens_map.json",
+     "size": 112
+    },
+    {
+     "type": "file",
+     "path": "tf_model.h5",
+     "size": 669729124,
+     "lfs": true
+    },
+    {
+     "type": "file",
+     "path": "tokenizer_config.json",
+     "size": 39
+    },
+    {
+     "type": "file",
+     "path": "vocab.txt",
+     "size": 871891
+    }
+   ]
+  }
+ },
+ "cat hf://datasets/d0r1h/customer_churn/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://datasets/d0r1h/customer_churn/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: apache-2.0\n---\n",
+   "bytes": 28,
+   "truncated": false
+  }
+ },
+ "cat hf://datasets/kalhosni/CustomerChurnTelecom/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://datasets/kalhosni/CustomerChurnTelecom/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: apache-2.0\n---\n",
+   "bytes": 28,
+   "truncated": false
+  }
+ },
+ "cat hf://datasets/krisnadwipaj/customer-churn/README.md": {
+  "status": "error",
+  "error": {
+   "code": "HF_FS_NOT_FOUND",
+   "message": "recorded error"
+  }
+ },
+ "cat hf://datasets/spmml/telco-customer-churn2/README.md": {
+  "status": "error",
+  "error": {
+   "code": "HF_FS_NOT_FOUND",
+   "message": "recorded error"
+  }
+ },
+ "cat hf://datasets/aai510-group1/telco-customer-churn/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://datasets/aai510-group1/telco-customer-churn/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlanguage:\n  - en\ntags:\n  - tabular-classification\n  - churn-prediction\n  - telecom\n  - customer-retention\n  - demographics\n  - customer-service\npretty_name: Telco Customer Churn\nsize_categories:\n  - 10K<n<100K\ntask_categories:\n  - tabular-classification\ndataset_info:\n  - config_name: default\n    features:\n      - name: Age\n        dtype: int64\n        feature_type: Value\n      - name: Avg Monthly GB Download\n        dtype: int64\n        feature_type: Value\n      - name: Avg Monthly Long Distance Charges\n        dtype: float64\n        feature_type: Value\n      - name: Churn\n        dtype: int64\n        feature_type: ClassLabel\n      - name: Churn Category\n        dtype: string\n        feature_type: ClassLabel\n      - name: Churn Reason\n        dtype: string\n        feature_type: ClassLabel\n      - name: Churn Score\n        dtype: int64\n        feature_type: Value\n      - name: City\n        dtype: string\n        feature_type: Value\n      - name: CLTV\n        dtype: int64\n        feature_type: Value\n      - name: Contract\n        dtype: string\n        feature_type: Value\n      - name: Country\n        dtype: string\n        feature_type: Value\n      - name: Customer ID\n        dtype: string\n        feature_type: Value\n      - name: Customer Status\n        dtype: string\n        feature_type: Value\n      - name: Dependents\n        dtype: int64\n        feature_type: Value\n      - name: Device Protection Plan\n        dtype: int64\n        feature_type: Value\n      - name: Gender\n        dtype: string\n        feature_type: Value\n      - name: Internet Service\n        dtype: int64\n        feature_type: Value\n      - name: Internet Type\n        dtype: string\n        feature_type: Value\n      - name: Lat Long\n        dtype: string\n        feature_type: Value\n      - name: Latitude\n        dtype: float64\n        feature_type: Value\n      - name: Longitude\n        dtype: float64\n        feature_type: Value\n      - name: Married\n        dtype: int64\n        feature_type: Value\n      - name: Monthly Charge\n        dtype: float64\n        feature_type: Value\n      - name: Multiple Lines\n        dtype: int64\n        feature_type: Value\n      - name: Number of Dependents\n        dtype: int64\n        feature_type: Value\n      - name: Number of Referrals\n        dtype: int64\n        feature_type: Value\n      - name: Offer\n        dtype: string\n        feature_type: Value\n      - name: Online Backup\n        dtype: int64\n        feature_type: Value\n      - name: Online Security",
+   "bytes": 2500,
+   "truncated": true,
+   "truncation_reason": "max_bytes",
+   "next_offset": 2500
+  }
+ },
+ "cat hf://datasets/jdnaufadf/aadityabansalcodes_telecommunications-industry-customer-churn-dataset/README.md": {
+  "status": "success",
+  "result": {
+   "uri": "hf://datasets/jdnaufadf/aadityabansalcodes_telecommunications-industry-customer-churn-dataset/README.md",
+   "op": "cat",
+   "path": "README.md",
+   "content": "---\nlicense: unknown\ntags:\n- kaggle\n- business\n---\n\n# Telecommunications Industry Customer churn dataset\n\nComplete customer churn dataset for telecom industry as made available by IBM.\n\n## Dataset Info\n\n- **Source**: [Kaggle](https://www.kaggle.com/datasets/aadityabansalcodes/telecommunications-industry-customer-churn-dataset)\n- **Original Size**: 5.86 MB\n- **Kaggle Downloads**: 3,926\n- **Files**: 14\n\n## Files\n\n- `CustomerChurn.csv`\n- `CustomerChurn.xlsx`\n- `Telco_customer_churn.csv`\n- `Telco_customer_churn.xlsx`\n- `Telco_customer_churn_demographics.csv`\n- `Telco_customer_churn_demographics.xlsx`\n- `Telco_customer_churn_location.csv`\n- `Telco_customer_churn_location.xlsx`\n- `Telco_customer_churn_population.csv`\n- `Telco_customer_churn_population.xlsx`\n- `Telco_customer_churn_services.csv`\n- `Telco_customer_churn_services.xlsx`\n- `Telco_customer_churn_status.csv`\n- `Telco_customer_churn_status.xlsx`\n\n---\n\n*Mirrored from Kaggle*\n",
+   "bytes": 941,
+   "truncated": false
+  }
+ }
+}

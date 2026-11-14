@@ -4,6 +4,7 @@ open-intelligence serve                     # MCP server over stdio (what an MCP
 open-intelligence route "<task>"            # offline: which sources, and why
 open-intelligence sources [--check]         # config and auth state; --check connects
 open-intelligence search "<task>" -q "..."  # route + live search, raw results
+open-intelligence picks "<task>" -q "..."   # route, search, gate, score: the top 3 per need
 open-intelligence skill-path                # where the routing skill (SKILL.md) is installed
 """
 
@@ -57,6 +58,20 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument("--need", action="append", choices=NEEDS)
     p_search.add_argument("--limit", type=int, default=5)
 
+    p_picks = sub.add_parser(
+        "picks", help="rank the routed sources' candidates and show the top picks (live)"
+    )
+    p_picks.add_argument("task")
+    p_picks.add_argument(
+        "-q", "--query", action="append", required=True, help="search phrasing (repeatable, up to 3)"
+    )
+    p_picks.add_argument("--need", action="append", choices=NEEDS)
+    p_picks.add_argument(
+        "--must-have", action="append", default=[], help="what a pick must do, as a short phrase (repeatable)"
+    )
+    p_picks.add_argument("--constraints", default="{}", help='JSON object, e.g. {"commercial_use": true}')
+    p_picks.add_argument("--top", type=int, default=3)
+
     sub.add_parser("skill-path", help="print the path of the bundled routing skill")
 
     args = parser.parse_args(argv)
@@ -89,6 +104,28 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_sources(connector, args.check))
     if command == "search":
         return asyncio.run(_search(connector, args.task, args.query, args.need, args.limit))
+    if command == "picks":
+        from pydantic import ValidationError
+
+        from open_intelligence.ranking import Constraints, Ranker, RankRequest
+
+        try:
+            constraints = Constraints(**json.loads(args.constraints))
+        except (ValueError, TypeError, ValidationError) as exc:
+            print(f"--constraints is not valid: {exc}", file=sys.stderr)
+            return 2
+        needs = args.need or list(NEEDS)
+        request = RankRequest(
+            task=args.task,
+            query=args.query[0],
+            needs=args.need,
+            queries=dict.fromkeys(needs, args.query),
+            must_have=dict.fromkeys(needs, args.must_have) if args.must_have else {},
+            constraints=constraints,
+            top=args.top,
+        )
+        _print(asyncio.run(Ranker(connector).find(request)))
+        return 0
     parser.error(f"unknown command {command}")
     return 2
 

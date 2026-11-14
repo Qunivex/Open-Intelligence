@@ -26,7 +26,8 @@ classifiers = [
 ]
 # Keep this list short: every dependency is supply-chain surface.
 dependencies = [
-  "mcp>=2.3,<3", # official MCP Python SDK: our server, and the client for the upstream servers
+  "mcp>=2.3,<3",       # official MCP Python SDK: our server, and the client for the upstream servers
+  "pydantic>=2.11,<3", # tool schemas (already required by mcp)
 ]
 
 [project.optional-dependencies]
@@ -63,6 +64,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PT"]
 ignore = [
   "S101",   # assert is fine in tests and for internal invariants
   "E501",   # long string literals are allowed
+  "SIM905", # word lists written as one string read better
 ]
 
 [tool.ruff.lint.per-file-ignores]

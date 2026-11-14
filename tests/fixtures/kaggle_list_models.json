@@ -1,0 +1,201 @@
+{
+ "models": [
+  {
+   "id": 142024,
+   "ref": "sujitmadhavan/sentiment",
+   "title": "sentiment",
+   "subtitle": "Find with clarity the sentiment which is &lt;= 1.0",
+   "author": "Sujit K M",
+   "slug": "sentiment",
+   "description": "## Experimental Code\nCode maps input string to array of strings and performs sentiment analysis.\nNot tested….\nGives fraction for the sentiment within the text.\n\n## Sentiment\nThis project was generated using the Kickstart template.\n\nYou can run this project with or without Hadoop, using the following shell instructions:",
+   "instances": [
+    {
+     "id": 118772,
+     "slug": "default",
+     "framework": "MODEL_FRAMEWORK_OTHER",
+     "fine_tunable": true,
+     "overview": "# build the binaries\n$ cargo build --release\n\n# run with Hadoop Streaming\n$ hadoop jar hadoop-streaming-2.8.2.jar \\\n    -input  \\\n    -output ",
+     "usage": "## Experimental Code\nCode maps input string to array of strings and performs sentiment analysis.\nNot tested….\nGives fraction for the sentiment within the text.\n\n## Sentiment\nThis project was generated",
+     "version_id": 140243,
+     "version_number": 1,
+     "url": "https://www.kaggle.com/models/sujitmadhavan/sentiment/Other/default",
+     "license_name": "MIT",
+     "model_instance_type": "MODEL_INSTANCE_TYPE_BASE_MODEL",
+     "total_uncompressed_bytes": "4901"
+    }
+   ],
+   "tags": [
+    {
+     "ref": "classification",
+     "name": "classification"
+    },
+    {
+     "ref": "text classification",
+     "name": "text classification"
+    },
+    {
+     "ref": "text generation",
+     "name": "text generation"
+    },
+    {
+     "ref": "text pre-processing",
+     "name": "text pre-processing"
+    },
+    {
+     "ref": "text segmentation",
+     "name": "text segmentation"
+    },
+    {
+     "ref": "text conversation",
+     "name": "text conversation"
+    }
+   ],
+   "provenance_sources": "## Data Source is any text data which can be checked and isn't ideally generated,",
+   "url": "https://www.kaggle.com/models/sujitmadhavan/sentiment",
+   "vote_count": 4,
+   "update_time": "2024-10-19T09:57:24.841578800Z"
+  },
+  {
+   "id": 172770,
+   "ref": "gpreda/gemma2-sentiment-analysis",
+   "title": "Gemma2 Sentiment Analysis",
+   "subtitle": "Fine-tuned Gemma2 2B EN model using QLoRA for sentiment analysis (financial domain sentences) task",
+   "author": "Gabriel Preda",
+   "slug": "gemma2-sentiment-analysis",
+   "description": "# Model Summary\n\nThe model is derived from **Gemma 2 2B EN** model.  \nIt was obtained by fine-tuning the source model using a dataset with labeled sentences with sentiment values (negative, neutral, and positive). The sentences are characteristic for financial domain.\n\n## Usage\n\nYou can use this system to classify the sentiment of sentences from financial domain.",
+   "instances": [
+    {
+     "id": 150282,
+     "slug": "gemma2_2b_en_sentiment_analysis",
+     "framework": "MODEL_FRAMEWORK_TRANSFORMERS",
+     "overview": "Gemma2 model fine-tuned for sentiment analysis task",
+     "usage": "To use in Kaggle Notebooks:\n```\n# pip install accelerate\nfrom transformers import AutoTokenizer, AutoModelForCausalLM\n\ntokenizer = AutoTokenizer.from_pretrained(\"/kaggle/input/gemma2_2b_en_sentiment_a",
+     "version_id": 601741,
+     "version_number": 4,
+     "url": "https://www.kaggle.com/models/gpreda/gemma2-sentiment-analysis/Transformers/gemma2_2b_en_sentiment_analysis",
+     "license_name": "Apache 2.0",
+     "total_uncompressed_bytes": "1035762721"
+    }
+   ],
+   "tags": [
+    {
+     "ref": "nlp",
+     "name": "nlp"
+    },
+    {
+     "ref": "text classification",
+     "name": "text classification"
+    },
+    {
+     "ref": "text generation",
+     "name": "text generation"
+    }
+   ],
+   "provenance_sources": "This model was obtained by fine-tuning Gemma2 2B EN (Transformers framework) for the task of sentiment analysis, using a dataset with labeled sentences from financial domain.   \nThe fine-tuning was performed using QLoRA (Quantized Low-rank Adaptation).   \nThe trainer used was SFTTrainer from TLR.",
+   "url": "https://www.kaggle.com/models/gpreda/gemma2-sentiment-analysis",
+   "vote_count": 6,
+   "update_time": "2025-10-08T14:26:19.930913800Z"
+  },
+  {
+   "id": 731317,
+   "ref": "mobeenfatimah/review-sentiment-analyzer",
+   "title": "Review Sentiment Analyzer",
+   "subtitle": "Machine Learning-based sentiment analysis for customer reviews using TF-IDF and Logistic Regression.",
+   "author": "Mobeen Fatima",
+   "slug": "review-sentiment-analyzer",
+   "description": "# Review Sentiment Analyzer\n\n## Overview\n\nThis model performs multi-class sentiment classification on customer reviews using Natural Language Processing (NLP).\n\nIt predicts one of the following sentiment classes:\n\n- Positive\n- Negative\n- Neutral\n\nThe model was trained using the **AI Review Sentiment Dataset (45K+ Multi-Domain Reviews)** containing realistic customer reviews from 15 product and service categories.\n\n---\n\n## Model Architecture\n\n- TF-IDF Vectorization\n- Logistic Regression Classifier\n- Scikit-learn\n- English Reviews\n\n---\n\n## Supported Classes\n\n- Positive\n- Negative\n- Neutral\n\n---\n\n## Files\n\n- sentiment_model.pkl\n- tfidf_vectorizer.pkl\n- label_encoder.pkl\n\n---\n\n## Example\n\nInput:\n\n```\nThe laptop exceeded my expectations. Battery life is amazing.\n```\n\nPrediction:\n\n```\nPositive\n```\n\n---\n\n## Applications\n\n- Customer Feedback Analysis\n- Sentiment Analysis\n- Opinion Mining\n- Review Classification\n- NLP Projects\n- AI Applications\n\n---\n\n## Author\n\nMobeen Fatima",
+   "instances": [
+    {
+     "id": 719687,
+     "slug": "default",
+     "framework": "MODEL_FRAMEWORK_SCIKIT_LEARN",
+     "overview": "# Review Sentiment Analyzer\n\nThis model performs multi-class sentiment classification on English customer reviews using Machine Learning.\n\n## Overview\n\nThe model predicts one of three sentiment classes:\n\n- Positive\n- Negative\n- Neutral\n\nIt was trained using TF-IDF feature extraction combined with a Logistic Regression classifier on a synthetic dataset containing 45,647 customer reviews collected a",
+     "usage": "import joblib\n\n# Load files\nmodel = joblib.load(\"sentiment_model.pkl\")\nvectorizer = joblib.load(\"tfidf_vectorizer.pkl\")\nlabel_encoder = joblib.load(\"label_encoder.pkl\")\n\n# Example review\nreview = [\n  ",
+     "version_id": 947044,
+     "version_number": 1,
+     "url": "https://www.kaggle.com/models/mobeenfatimah/review-sentiment-analyzer/ScikitLearn/default",
+     "license_name": "Apache 2.0",
+     "model_instance_type": "MODEL_INSTANCE_TYPE_BASE_MODEL",
+     "total_uncompressed_bytes": "46715"
+    }
+   ],
+   "tags": [
+    {
+     "ref": "nlp",
+     "name": "nlp"
+    },
+    {
+     "ref": "data analytics",
+     "name": "data analytics"
+    },
+    {
+     "ref": "logistic regression",
+     "name": "logistic regression"
+    },
+    {
+     "ref": "ratings and reviews",
+     "name": "ratings and reviews"
+    },
+    {
+     "ref": "python",
+     "name": "python"
+    }
+   ],
+   "provenance_sources": "This model was developed from scratch using Scikit-learn and trained on the AI Review Sentiment Dataset, a synthetic dataset containing 45,647 English customer reviews across 15 product and service categories. Reviews were generated to represent Positive, Negative, and Neutral sentiments and preprocessed using TF-IDF vectorization. A Logistic Regression classifier was trained for multi-class sentiment classification. The model predicts the sentiment of English customer reviews and returns the predicted class along with a confidence score. It is intended for educational, research, and demonstration purposes.",
+   "url": "https://www.kaggle.com/models/mobeenfatimah/review-sentiment-analyzer",
+   "vote_count": 4,
+   "update_time": "2026-07-28T08:21:17.965661700Z"
+  },
+  {
+   "id": 37433,
+   "ref": "alfathterry/distilbert-amazon-review-positive-negative",
+   "title": "DistilBERT Product Review (Positive - Negative)",
+   "subtitle": "your marketplace sentiment analyzer",
+   "author": "Al Fath Terry",
+   "slug": "distilbert-amazon-review-positive-negative",
+   "description": "# Model Summary\n\nThis is a DistilBERT fine tuned model, trained for identifying positive or negative product reviews\n\n# Usage\n\nfrom transformers import pipeline\n\ntokenizer = AutoTokenizer.from_pretrained(\"distilbert-base-uncased\") \nclf = pipeline('text-classification','THIS_MODEL', tokenizer=tokenizer)\n\n#example\n\nclf( 'This product is really good!')\n\noutput &gt;&gt; a sentiment (positive or negative) and the score\n\nfor more detail, check this notebook : [DistilBERT Sentiment Analysis](https://www.kaggle.com/code/alfathterry/fine-tuning-distilbert-sentiment-analysis)",
+   "instances": [
+    {
+     "id": 26394,
+     "slug": "v1",
+     "framework": "MODEL_FRAMEWORK_TENSOR_FLOW_2",
+     "fine_tunable": true,
+     "overview": "v1",
+     "usage": "for more detail, check this notebook : [DistilBERT Sentiment Analysis](https://www.kaggle.com/code/alfathterry/fine-tuning-distilbert-sentiment-analysis)",
+     "version_id": 31464,
+     "version_number": 1,
+     "url": "https://www.kaggle.com/models/alfathterry/distilbert-amazon-review-positive-negative/TensorFlow2/v1",
+     "license_name": "MIT",
+     "model_instance_type": "MODEL_INSTANCE_TYPE_BASE_MODEL",
+     "total_uncompressed_bytes": "267952346"
+    }
+   ],
+   "tags": [
+    {
+     "ref": "nlp",
+     "name": "nlp"
+    },
+    {
+     "ref": "text mining",
+     "name": "text mining"
+    },
+    {
+     "ref": "transformers",
+     "name": "transformers"
+    },
+    {
+     "ref": "text classification",
+     "name": "text classification"
+    },
+    {
+     "ref": "distilbert",
+     "name": "distilbert"
+    }
+   ],
+   "provenance_sources": "I trained this model on my own laptop",
+   "url": "https://www.kaggle.com/models/alfathterry/distilbert-amazon-review-positive-negative",
+   "vote_count": 29,
+   "update_time": "2024-04-15T09:01:01.480258100Z"
+  }
+ ]
+}

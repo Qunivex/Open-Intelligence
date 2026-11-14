@@ -24,12 +24,15 @@ async def test_exposes_a_small_tool_surface(connector: Connector) -> None:
         tools = {t.name: t for t in (await client.list_tools()).tools}
         prompts = {p.name for p in (await client.list_prompts()).prompts}
     assert set(tools) == {
+        "find_top_picks",
         "route_request",
         "search_open_source",
         "list_sources",
         "list_source_tools",
         "call_source_tool",
     }
+    constraints = tools["find_top_picks"].input_schema["$defs"]["Constraints"]["properties"]
+    assert {"commercial_use", "programming_language", "languages", "max_model_size_gb"} <= set(constraints)
     assert all(t.annotations and t.annotations.read_only_hint for t in tools.values())
     assert prompts == {"open_source_routing"}
 
@@ -73,7 +76,7 @@ async def test_search_fans_out_to_routed_sources_only(connector: Connector) -> N
     kaggle_ds = json.loads(calls[("kaggle", "dataset")]["untrusted_content"])["args"]
     assert kaggle_ds == {"search": "sentiment", "pageSize": 3, "sortBy": "Relevance"}
     assert calls[("kaggle", "model")]["role"] == "secondary"
-    assert "none yet" in data["ranking"]
+    assert data["ranking"].startswith("none")
 
 
 async def test_search_with_caller_needs(connector: Connector) -> None:
@@ -125,3 +128,32 @@ def test_skill_text_is_bundled() -> None:
     text = skill_text()
     assert text.startswith("# Open-source routing")
     assert "Route by the kind of artifact" in text
+
+
+async def test_find_top_picks_over_a_real_transport(ranked_stdio_connector: Connector) -> None:
+    """The ranking tool end to end: MCP client -> our server -> stdio -> fake upstream servers."""
+    result = await _call(
+        ranked_stdio_connector,
+        "find_top_picks",
+        {
+            "task": "Python project to automate a Snowflake pipeline that sends data from Census to Snowflake",
+            "query": "census snowflake",
+            "must_have": {"code": ["census api", "snowflake load"]},
+            "constraints": {"programming_language": "python"},
+        },
+    )
+    assert not result.is_error
+    data = result.structured_content
+    assert [r["need"] for r in data["results"]] == ["code"]
+    code = data["results"][0]
+    assert code["verdict"] == "picks"
+    assert code["picks"][0]["id"] == "example-acme/census-snowflake-sync"
+    assert data["constraints"]["given"] == {"programming_language": "python"}
+    assert "first hypothesis" in data["method"]
+
+
+async def test_find_top_picks_rejects_unknown_constraints(connector: Connector) -> None:
+    result = await _call(
+        connector, "find_top_picks", {"task": "x", "query": "y", "constraints": {"budget": "low"}}
+    )
+    assert result.is_error

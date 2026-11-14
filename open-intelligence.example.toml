@@ -11,6 +11,27 @@
 timeout_seconds = 45        # per source, per request
 max_result_chars = 12000    # cap on the text returned from one upstream tool call
 
+[ranking]
+per_query = 10          # results asked of a source per search phrasing
+max_queries = 3         # phrasings used per need
+read_per_source = 8     # candidates per need and source whose README or card is read
+min_fit = 0.3           # below this fit a candidate is not offered at all
+
+# How much each part of the score counts. Normalized to sum to 1. A first hypothesis, not tuned values.
+[ranking.weights]
+fit = 0.40
+quality = 0.20
+health = 0.15
+trust = 0.15
+adoption = 0.10
+
+# Months after which freshness halves.
+[ranking.half_life_months]
+code = 18
+model = 30
+dataset = 60
+notebook = 30
+
 [sources.github]
 enabled = true
 transport = "http"

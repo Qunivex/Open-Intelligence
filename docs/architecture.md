@@ -5,9 +5,11 @@ official GitHub, Hugging Face and Kaggle MCP servers.
 
 ```mermaid
 flowchart LR
-    Agent[AI agent] -- MCP --> OI[Open Intelligence<br/>5 read-only tools]
+    Agent[AI agent] -- MCP --> OI[Open Intelligence<br/>6 read-only tools]
     Skill[open-source-routing skill] --> Agent
     OI --> Router[Router<br/>needs -> sources]
+    OI --> Ranker[Ranker<br/>gates, scores, top 3]
+    Ranker --> Connector
     OI --> Connector[Connector<br/>allowlist, auth, timeouts]
     Connector -- MCP, Streamable HTTP --> GH[api.githubcopilot.com/mcp<br/>GitHub, read-only]
     Connector -- MCP, Streamable HTTP --> HF[huggingface.co/mcp<br/>Hugging Face]
@@ -23,13 +25,34 @@ flowchart TD
     B --> C{unsure?}
     C -- yes --> D[route_request: inferred needs,<br/>evidence, ambiguities]
     C -- no --> E
-    D --> E[search_open_source:<br/>task, needs, per-need keywords]
+    D --> E[find_top_picks: task, needs, phrasings,<br/>must-haves, constraints]
     E --> F[Router maps needs to sources]
-    F --> G[Connector runs each source's search<br/>in parallel, one connection per source]
-    G --> H[Raw results per source and need<br/>untrusted, unranked]
-    H --> I[Agent inspects candidates<br/>call_source_tool]
-    I --> J[Agent presents up to 3 per component<br/>with what it checked]
+    F --> G[Gather: every phrasing, platform order<br/>plus one popularity order, de-duplicated]
+    G --> H[Score from search metadata,<br/>apply metadata gates]
+    H --> I[Read the best 8 per need and source:<br/>README, card, file list]
+    I --> J[Score again, apply the remaining gates]
+    J --> K[Diverse top 3 per need, with reasons,<br/>warnings and unresolved checks]
+    K --> L{questions_for_user?}
+    L -- yes --> M[Agent asks the user,<br/>calls again with the answer]
+    L -- no --> N[Agent presents the picks]
 ```
+
+`search_open_source` remains for exploring: it returns each platform's raw results, unranked.
+
+## The ranking pipeline
+
+| stage | what happens | code |
+| --- | --- | --- |
+| adapters | which upstream calls to make for a (source, need), and how to read their results into one `Candidate` shape | `ranking/adapters.py` |
+| gates | facts that disqualify: archived, license against the constraints, pickle-only weights, size, age, poor fit | `ranking/scoring.py` |
+| scores | fit, quality, health, trust, adoption, each 0 to 1; unknown evidence is neutral and reported | `ranking/scoring.py` |
+| selection | best first; conversions, forks and re-uploads fold into the pick they duplicate | `ranking/scoring.py` |
+| pipeline | route, gather, score, read the shortlist, score again, pick, explain | `ranking/engine.py` |
+
+Scores are computed per need: a repository is never compared with a dataset. Models and datasets come from
+two sources each; they share one list because adoption is a percentile within each source and the other
+parts are on the same scale. The parameters, the decisions behind them and the limits of this first version
+are in [ranking-parameters.md](ranking-parameters.md).
 
 ## Modules
 
@@ -39,15 +62,16 @@ flowchart TD
 | `config.py` | optional TOML overrides (endpoint, transport, headers, token env names); refuses secrets in the file |
 | `connector.py` | MCP client: connect (HTTP or stdio), list/call allowed tools, timeouts, clean errors, output cap |
 | `router.py` | needs -> sources, with evidence, ambiguities and confidence |
+| `ranking/` | candidates, gates, scores and the top-3 pipeline (see below) |
 | `server.py` | the MCP server: tools, instructions, the routing prompt |
-| `cli.py` | `serve`, `route`, `sources`, `search`, `skill-path` |
+| `cli.py` | `serve`, `route`, `sources`, `search`, `picks`, `skill-path` |
 | `skills/open-source-routing/SKILL.md` | the routing skill for agents that load skills |
 
 ## Design decisions
 
 - **A gateway, not a pass-through.** The three upstream servers expose about 100 tools together (Kaggle
   alone 76, including upload, download and submit). Loading all of them makes agents pick wrong tools and
-  costs context. The agent sees five tools; the upstream tools stay reachable through `call_source_tool`,
+  costs context. The agent sees six tools; the upstream tools stay reachable through `call_source_tool`,
   limited to a read-only allowlist.
 - **Route by artifact kind.** "Data" in a request does not mean a dataset is needed. The router asks what
   kind of artifact would let the user build on existing work (code, model, dataset, notebook) and maps that
@@ -58,5 +82,11 @@ flowchart TD
 - **Stateless connections.** One short MCP connection per source per request. A source that is down or
   missing a token affects only its own results, and the error says what to fix.
 - **Tokens from the environment only.** Never in the config file, tool arguments, results or errors.
-- **No ranking yet.** Results keep each platform's order and say so. Ranking is being researched:
-  see [ranking-parameters.md](ranking-parameters.md).
+- **Gates before scores, and popularity last.** A disqualifying fact removes a candidate whatever its
+  score. Adoption is 10% of the score, relative to the other candidates, and damped when signals disagree.
+- **Unknown is neutral and visible.** Missing evidence neither helps nor hurts a candidate; it is listed
+  on the pick as an unresolved check.
+- **The data comes through the official MCP servers only.** That keeps one integration per platform, at
+  a cost: Hugging Face's search and details tools answer in Markdown meant for a model, so those parsers
+  can drift. The live tests check them.
+- **The weights are a hypothesis.** They are configurable and unproven until the evaluation exists.

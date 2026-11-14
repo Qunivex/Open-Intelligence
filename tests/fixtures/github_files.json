@@ -1,0 +1,14 @@
+{
+  "example-acme/census-snowflake-sync": {
+    "readme": "# census-snowflake-sync\n\n[![CI](https://github.com/example-acme/census-snowflake-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/example-acme/census-snowflake-sync/actions)\n\nLoad data from the US Census API into Snowflake tables, on a schedule.\n\n## Installation\n\n```bash\npip install census-snowflake-sync\n```\n\n## Usage\n\n```python\nfrom census_snowflake_sync import Pipeline\n\nPipeline(dataset=\"acs/acs5\", year=2024).sync(table=\"CENSUS.ACS5\")\n```\n\n## Features\n\n- Incremental loads with a state table\n- Retries with backoff on Census API rate limits\n- Schema mapping from Census variables to Snowflake columns\n- Works with Airflow, Dagster and plain cron for automation and scheduling\n\n## Configuration\n\nSet SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER and a key pair. The Census API key is optional for small pulls.\n\n## Testing\n\nRun the tests with pytest. Integration tests need a Snowflake trial account.\n\n## License\n\nMIT\n",
+    "release": {"tag_name": "v2.3.0", "name": "v2.3.0", "published_at": "2026-10-18T09:00:00Z", "prerelease": false}
+  },
+  "example-dataflow/reverse-etl": {
+    "readme": "# reverse-etl\n\nSync data between your warehouse and the tools your teams use.\n\n## Install\n\n```bash\ngo install github.com/example-dataflow/reverse-etl@latest\n```\n\n## Quick start\n\n```bash\nreverse-etl sync --from snowflake --to salesforce\n```\n\nConnectors: Snowflake, BigQuery, Redshift, Census, Salesforce, HubSpot.\n\nA Python client is available for triggering syncs from a pipeline.\n",
+    "release": {"tag_name": "v1.9.2", "name": "v1.9.2", "published_at": "2026-11-05T09:00:00Z", "prerelease": false}
+  },
+  "example-hype/snowflake-pipeline-pro": {
+    "readme": "# snowflake-pipeline-pro\n\nComing soon.\n",
+    "release": null
+  }
+}

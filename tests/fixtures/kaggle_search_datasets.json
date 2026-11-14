@@ -1,0 +1,190 @@
+{
+ "datasets": [
+  {
+   "id": 13996,
+   "ref": "blastchar/telco-customer-churn",
+   "subtitle": "Focused customer retention programs",
+   "creator_name": "BlastChar",
+   "creator_url": "blastchar",
+   "total_bytes": "175758",
+   "url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
+   "last_updated": "2018-02-23T18:20:00.210Z",
+   "download_count": 636704,
+   "license_name": "Data files © Original Authors",
+   "owner_name": "BlastChar",
+   "owner_ref": "blastchar",
+   "kernel_count": 2995,
+   "title": "Telco Customer Churn",
+   "view_count": 3245616,
+   "vote_count": 3966,
+   "current_version_number": 1,
+   "usability_rating": 0.88235295,
+   "tags": [
+    {
+     "ref": "business",
+     "name": "business"
+    }
+   ]
+  },
+  {
+   "id": 567482,
+   "ref": "barun2104/telecom-churn",
+   "subtitle": "Predict Customer Churn in a Telecom Industry ",
+   "creator_name": "Barun Kumar",
+   "creator_url": "barun2104",
+   "total_bytes": "46575",
+   "url": "https://www.kaggle.com/datasets/barun2104/telecom-churn",
+   "last_updated": "2020-03-23T16:30:13.047Z",
+   "download_count": 23328,
+   "license_name": "Data files © Original Authors",
+   "owner_name": "Barun Kumar",
+   "owner_ref": "barun2104",
+   "kernel_count": 254,
+   "title": "Customer Churn",
+   "view_count": 132376,
+   "vote_count": 173,
+   "current_version_number": 2,
+   "usability_rating": 0.9411765,
+   "tags": [
+    {
+     "ref": "business",
+     "name": "business"
+    },
+    {
+     "ref": "tabular",
+     "name": "tabular"
+    },
+    {
+     "ref": "binary classification",
+     "name": "binary classification"
+    }
+   ]
+  },
+  {
+   "id": 3197960,
+   "ref": "radheshyamkollipara/bank-customer-churn",
+   "subtitle": "Bank Customer Data for Customer Churn ",
+   "creator_name": "Radheshyam Kollipara",
+   "creator_url": "radheshyamkollipara",
+   "total_bytes": "314688",
+   "url": "https://www.kaggle.com/datasets/radheshyamkollipara/bank-customer-churn",
+   "last_updated": "2023-04-28T16:32:01.277Z",
+   "download_count": 42494,
+   "license_name": "Other (specified in description)",
+   "owner_name": "Radheshyam Kollipara",
+   "owner_ref": "radheshyamkollipara",
+   "kernel_count": 192,
+   "title": "Bank Customer Churn",
+   "view_count": 193874,
+   "vote_count": 299,
+   "current_version_number": 1,
+   "usability_rating": 1,
+   "tags": [
+    {
+     "ref": "exploratory data analysis",
+     "name": "exploratory data analysis"
+    },
+    {
+     "ref": "data visualization",
+     "name": "data visualization"
+    },
+    {
+     "ref": "data analytics",
+     "name": "data analytics"
+    },
+    {
+     "ref": "classification",
+     "name": "classification"
+    },
+    {
+     "ref": "binary classification",
+     "name": "binary classification"
+    }
+   ]
+  },
+  {
+   "id": 3404076,
+   "ref": "muhammadshahidazeem/customer-churn-dataset",
+   "subtitle": "Predict Customer's Retention",
+   "creator_name": "Muhammad Shahid Azeem",
+   "creator_url": "muhammadshahidazeem",
+   "total_bytes": "6980992",
+   "url": "https://www.kaggle.com/datasets/muhammadshahidazeem/customer-churn-dataset",
+   "last_updated": "2023-06-14T11:16:49.197Z",
+   "download_count": 50131,
+   "license_name": "GPL 2",
+   "owner_name": "Muhammad Shahid Azeem",
+   "owner_ref": "muhammadshahidazeem",
+   "kernel_count": 160,
+   "title": "Customer Churn Dataset",
+   "view_count": 205222,
+   "vote_count": 216,
+   "current_version_number": 1,
+   "usability_rating": 1,
+   "tags": [
+    {
+     "ref": "asia",
+     "name": "asia"
+    },
+    {
+     "ref": "intermediate",
+     "name": "intermediate"
+    },
+    {
+     "ref": "data analytics",
+     "name": "data analytics"
+    },
+    {
+     "ref": "classification",
+     "name": "classification"
+    },
+    {
+     "ref": "tabular",
+     "name": "tabular"
+    }
+   ]
+  },
+  {
+   "id": 2445309,
+   "ref": "gauravtopre/bank-customer-churn-dataset",
+   "subtitle": "Bank Customer Data for Predicting Customer Churn ",
+   "creator_name": "Gaurav Topre",
+   "creator_url": "gauravtopre",
+   "total_bytes": "191965",
+   "url": "https://www.kaggle.com/datasets/gauravtopre/bank-customer-churn-dataset",
+   "last_updated": "2022-08-30T15:01:34.427Z",
+   "download_count": 47399,
+   "license_name": "Other (specified in description)",
+   "owner_name": "Gaurav Topre",
+   "owner_ref": "gauravtopre",
+   "kernel_count": 195,
+   "title": "Bank Customer Churn Dataset ",
+   "view_count": 221834,
+   "vote_count": 255,
+   "current_version_number": 1,
+   "usability_rating": 1,
+   "tags": [
+    {
+     "ref": "banking",
+     "name": "banking"
+    },
+    {
+     "ref": "exploratory data analysis",
+     "name": "exploratory data analysis"
+    },
+    {
+     "ref": "classification",
+     "name": "classification"
+    },
+    {
+     "ref": "logistic regression",
+     "name": "logistic regression"
+    },
+    {
+     "ref": "binary classification",
+     "name": "binary classification"
+    }
+   ]
+  }
+ ]
+}

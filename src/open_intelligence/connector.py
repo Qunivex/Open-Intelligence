@@ -55,6 +55,9 @@ class CallOutcome:
     text: str = ""
     truncated: bool = False
     error: str | None = None
+    # The upstream tool's structured result, when it sends one. For the ranking pipeline only:
+    # it is not part of what the gateway returns to the agent.
+    structured: Any = None
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -191,8 +194,20 @@ class Connector:
     async def call(self, source_id: str, tool: str, arguments: dict[str, Any] | None = None) -> CallOutcome:
         return (await self.call_many(source_id, [(tool, arguments or {})]))[0]
 
-    async def call_many(self, source_id: str, calls: list[tuple[str, dict[str, Any]]]) -> list[CallOutcome]:
-        """Run several tool calls on one source over a single connection, in order."""
+    async def call_many(
+        self,
+        source_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        *,
+        full_text: bool = False,
+        concurrency: int = 1,
+    ) -> list[CallOutcome]:
+        """Run several tool calls on one source over a single connection.
+
+        Outcomes come back in the order of ``calls``. ``full_text`` skips the output cap (for the
+        ranking pipeline, which parses results instead of returning them). ``concurrency`` is how
+        many calls may be in flight at once.
+        """
         spec = self.spec(source_id)
         outcomes = [CallOutcome(source=source_id, tool=t, arguments=a, ok=False) for t, a in calls]
         blocked = [o for o in outcomes if o.tool not in spec.allowed_tools]
@@ -205,22 +220,29 @@ class Connector:
         if not todo:
             return outcomes
 
+        limiter = anyio.CapacityLimiter(max(1, concurrency))
+
+        async def one(client: Client, o: CallOutcome) -> None:
+            async with limiter:
+                try:
+                    result = await client.call_tool(o.tool, o.arguments)
+                except Exception as exc:
+                    o.error = describe_error(exc)
+                    return
+            text = _result_text(result)
+            if result.is_error:
+                o.error = f"{source_id} returned an error: {_cap(text, 600)[0].strip()}"
+                if "unauth" in text.lower() and spec.token_env and self._token(spec)[1] is None:
+                    o.error += f" (this tool needs a {source_id} token: set ${spec.token_env[0]})"
+                return
+            o.structured = getattr(result, "structured_content", None)
+            o.text, o.truncated = (text, False) if full_text else _cap(text, self.settings.max_result_chars)
+            o.ok = True
+
         async def work() -> None:
-            async with self.open(source_id) as client:
+            async with self.open(source_id) as client, anyio.create_task_group() as tg:
                 for o in todo:
-                    try:
-                        result = await client.call_tool(o.tool, o.arguments)
-                    except Exception as exc:
-                        o.error = describe_error(exc)
-                        continue
-                    text = _result_text(result)
-                    if result.is_error:
-                        o.error = f"{source_id} returned an error: {_cap(text, 600)[0].strip()}"
-                        if "unauth" in text.lower() and spec.token_env and self._token(spec)[1] is None:
-                            o.error += f" (this tool needs a {source_id} token: set ${spec.token_env[0]})"
-                        continue
-                    o.text, o.truncated = _cap(text, self.settings.max_result_chars)
-                    o.ok = True
+                    tg.start_soon(one, client, o)
 
         try:
             await self._guarded(spec, work)
@@ -303,6 +325,9 @@ def _result_text(result: Any) -> str:
     parts = []
     for block in result.content or []:
         text = getattr(block, "text", None)
+        if text is None:
+            # An embedded resource (GitHub's get_file_contents returns the file this way).
+            text = getattr(getattr(block, "resource", None), "text", None)
         if text is not None:
             parts.append(text)
         else:

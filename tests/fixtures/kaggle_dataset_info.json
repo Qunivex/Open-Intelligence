@@ -1,0 +1,194 @@
+{
+ "blastchar/telco-customer-churn": {
+  "id": 13996,
+  "ref": "blastchar/telco-customer-churn",
+  "subtitle": "Focused customer retention programs",
+  "creator_name": "BlastChar",
+  "total_bytes": "977501",
+  "last_updated": "2018-02-23T18:20:00.210Z",
+  "download_count": 636704,
+  "license_name": "Data files © Original Authors",
+  "description": "### Context\n\n\"Predict behavior to retain customers. You can analyze all relevant customer data and develop focused customer retention programs.\"  [IBM Sample Data Sets]\n\n### Content\n\nEach row represents a customer, each column contains customer’s attributes described on the column Metadata.\n\n**The data set includes information about:**\n\n+ Customers who left within the last month – the column is called Churn\n+ Services that each customer has signed up for – phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies\n+ Customer account information – how long they’ve been a customer, contract, payment method, paperless billing, monthly charges, and total charges\n+ Demographic info about customers – gender, age range, and if they have partners and dependents\n\n### Inspiration\n\nTo explore this type of models and learn more about the subject.\n\n**New version from IBM:**\nhttps://community.ibm.com/community/user/businessanalytics/blogs/steven-macko/2019/07/11/telco-customer-churn-1113",
+  "owner_name": "BlastChar",
+  "owner_ref": "blastchar",
+  "kernel_count": 2995,
+  "title": "Telco Customer Churn",
+  "topic_count": 33,
+  "view_count": 3245616,
+  "vote_count": 3966,
+  "current_version_number": 1,
+  "usability_rating": 0.88235295,
+  "tags": [
+   {
+    "ref": "business",
+    "name": "business"
+   }
+  ],
+  "versions": [
+   {
+    "version_number": 1,
+    "creation_date": "2018-02-23T18:20:00.210Z",
+    "creator_name": "BlastChar",
+    "creator_ref": "telco-customer-churn",
+    "version_notes": "Initial release",
+    "status": "Ready"
+   }
+  ]
+ },
+ "barun2104/telecom-churn": {
+  "id": 567482,
+  "ref": "barun2104/telecom-churn",
+  "subtitle": "Predict Customer Churn in a Telecom Industry ",
+  "creator_name": "Barun Kumar",
+  "total_bytes": "128828",
+  "last_updated": "2020-03-23T16:30:13.047Z",
+  "download_count": 23328,
+  "license_name": "Data files © Original Authors",
+  "description": "### Context\n\nWith the rapid development of telecommunication industry, the service providers are inclined more towards expansion of the subscriber base. To meet the need of surviving in the competitive environment, the retention of existing customers has become a huge challenge. It is stated that the cost of acquiring a new customer is far more than that for retaining the existing one. Therefore, it is imperative for the telecom industries to use advanced analytics to understand consumer behavior and in-turn predict the association of the customers as whether or not they will leave the company. \n\n\n### Content\n\nThis data set contains customer level information for a telecom company. Various attributes related to the services used are recorded for each customer.\n\n\n### Inspiration\n\nSome possible insights could be - \n1. What variables are contributing to customer churn?\n2. Who are the customers more likely to churn?\n3. What actions can be taken to stop them from leaving?",
+  "owner_name": "Barun Kumar",
+  "owner_ref": "barun2104",
+  "kernel_count": 254,
+  "title": "Customer Churn",
+  "topic_count": 4,
+  "view_count": 132376,
+  "vote_count": 173,
+  "current_version_number": 2,
+  "usability_rating": 0.9411765,
+  "tags": [
+   {
+    "ref": "business",
+    "name": "business"
+   },
+   {
+    "ref": "tabular",
+    "name": "tabular"
+   },
+   {
+    "ref": "binary classification",
+    "name": "binary classification"
+   }
+  ],
+  "versions": [
+   {
+    "version_number": 2,
+    "creation_date": "2020-03-23T16:30:13.047Z",
+    "creator_name": "Barun Kumar",
+    "creator_ref": "telecom-churn",
+    "version_notes": "Added CSV Version",
+    "status": "Ready"
+   },
+   {
+    "version_number": 1,
+    "creation_date": "2020-03-23T15:23:10.783Z",
+    "creator_name": "Barun Kumar",
+    "creator_ref": "telecom-churn",
+    "version_notes": "Initial release",
+    "status": "Ready"
+   }
+  ]
+ },
+ "radheshyamkollipara/bank-customer-churn": {
+  "id": 3197960,
+  "ref": "radheshyamkollipara/bank-customer-churn",
+  "subtitle": "Bank Customer Data for Customer Churn ",
+  "creator_name": "Radheshyam Kollipara",
+  "total_bytes": "837415",
+  "last_updated": "2023-04-28T16:32:01.277Z",
+  "download_count": 42494,
+  "license_name": "Other (specified in description)",
+  "description": "RowNumber—corresponds to the record (row) number and has no effect on the output.\nCustomerId—contains random values and has no effect on customer leaving the bank.\nSurname—the surname of a customer has no impact on their decision to leave the bank.\nCreditScore—can have an effect on customer churn, since a customer with a higher credit score is less likely to leave the bank.\nGeography—a customer’s location can affect their decision to leave the bank.\nGender—it’s interesting to explore whether gender plays a role in a customer leaving the bank.\nAge—this is certainly relevant, since older customers are less likely to leave their bank than younger ones.\nTenure—refers to the number of years that the customer has been a client of the bank. Normally, older clients are more loyal and less likely to leave a bank.\nBalance—also a very good indicator of customer churn, as people with a higher balance in their accounts are less likely to leave the bank compared to those with lower balances.\nNumOfProducts—refers to the number of products that a customer has purchased through the bank.\nHasCrCard—denotes whether or not a customer has a credit card. This column is also relevant, since people with a credit card are less likely to leave the bank.\nIsActiveMember—active customers are less likely to leave the bank.\nEstimatedSalary—as with balance, people with lower salaries are more likely to leave the bank compared to those with higher salaries.\nExited—whether or not the customer left the bank.\nC",
+  "owner_name": "Radheshyam Kollipara",
+  "owner_ref": "radheshyamkollipara",
+  "kernel_count": 192,
+  "title": "Bank Customer Churn",
+  "topic_count": 14,
+  "view_count": 193874,
+  "vote_count": 299,
+  "current_version_number": 1,
+  "usability_rating": 1,
+  "tags": [
+   {
+    "ref": "classification",
+    "name": "classification"
+   },
+   {
+    "ref": "data analytics",
+    "name": "data analytics"
+   },
+   {
+    "ref": "data visualization",
+    "name": "data visualization"
+   },
+   {
+    "ref": "exploratory data analysis",
+    "name": "exploratory data analysis"
+   },
+   {
+    "ref": "binary classification",
+    "name": "binary classification"
+   }
+  ],
+  "versions": [
+   {
+    "version_number": 1,
+    "creation_date": "2023-04-28T16:32:01.277Z",
+    "creator_name": "Radheshyam Kollipara",
+    "creator_ref": "bank-customer-churn",
+    "version_notes": "Initial release",
+    "status": "Ready"
+   }
+  ]
+ },
+ "muhammadshahidazeem/customer-churn-dataset": {
+  "id": 3404076,
+  "ref": "muhammadshahidazeem/customer-churn-dataset",
+  "subtitle": "Predict Customer's Retention",
+  "creator_name": "Muhammad Shahid Azeem",
+  "total_bytes": "26730974",
+  "last_updated": "2023-06-14T11:16:49.197Z",
+  "download_count": 50131,
+  "license_name": "GPL 2",
+  "description": "Customer churn refers to the phenomenon where customers discontinue their relationship or subscription with a company or service provider. It represents the rate at which customers stop using a company's products or services within a specific period. Churn is an important metric for businesses as it directly impacts revenue, growth, and customer retention.\n\nIn the context of the Churn dataset, the churn label indicates whether a customer has churned or not. A churned customer is one who has decided to discontinue their subscription or usage of the company's services. On the other hand, a non-churned customer is one who continues to remain engaged and retains their relationship with the company.\n\nUnderstanding customer churn is crucial for businesses to identify patterns, factors, and indicators that contribute to customer attrition. By analyzing churn behavior and its associated features, companies can develop strategies to retain existing customers, improve customer satisfaction, and reduce customer turnover. Predictive modeling techniques can also be applied to forecast and proactively address potential churn, enabling companies to take proactive measures to retain at-risk customers.",
+  "owner_name": "Muhammad Shahid Azeem",
+  "owner_ref": "muhammadshahidazeem",
+  "kernel_count": 160,
+  "title": "Customer Churn Dataset",
+  "topic_count": 13,
+  "view_count": 205222,
+  "vote_count": 216,
+  "current_version_number": 1,
+  "usability_rating": 1,
+  "tags": [
+   {
+    "ref": "classification",
+    "name": "classification"
+   },
+   {
+    "ref": "tabular",
+    "name": "tabular"
+   },
+   {
+    "ref": "data analytics",
+    "name": "data analytics"
+   },
+   {
+    "ref": "intermediate",
+    "name": "intermediate"
+   },
+   {
+    "ref": "asia",
+    "name": "asia"
+   }
+  ],
+  "versions": [
+   {
+    "version_number": 1,
+    "creation_date": "2023-06-14T11:16:49.197Z",
+    "creator_name": "Muhammad Shahid Azeem",
+    "creator_ref": "customer-churn-dataset",
+    "version_notes": "Initial release",
+    "status": "Ready"
+   }
+  ]
+ }
+}

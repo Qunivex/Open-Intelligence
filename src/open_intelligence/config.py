@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,9 @@ _SOURCE_KEYS = {
     "allowed_tools",
 }
 _GATEWAY_KEYS = {"timeout_seconds", "max_result_chars"}
+_RANKING_KEYS = {"weights", "per_query", "max_queries", "read_per_source", "min_fit", "half_life_months"}
+_WEIGHT_KEYS = ("fit", "quality", "health", "trust", "adoption")
+_NEED_KEYS = ("code", "model", "dataset", "notebook")
 _SECRET_HINTS = ("token", "secret", "password", "api_key", "apikey")
 _SECRET_HEADERS = {"authorization", "cookie", "x-api-key"}
 
@@ -43,11 +46,36 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True)
+class RankingSettings:
+    """Knobs of the ranking pipeline. The defaults are a first hypothesis, not tuned values."""
+
+    # How much each part of the score counts. Normalized to sum to 1.
+    weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "fit": 0.40,
+            "quality": 0.20,
+            "health": 0.15,
+            "trust": 0.15,
+            "adoption": 0.10,
+        }
+    )
+    per_query: int = 10  # results asked of a source per query
+    max_queries: int = 3  # phrasings used per need
+    read_per_source: int = 8  # candidates per need and source whose README / card is read
+    min_fit: float = 0.3  # below this fit a candidate is not offered at all
+    # Months after which freshness halves: code goes stale faster than data.
+    half_life_months: dict[str, float] = field(
+        default_factory=lambda: {"code": 18.0, "model": 30.0, "dataset": 60.0, "notebook": 30.0}
+    )
+
+
+@dataclass(frozen=True)
 class Settings:
     sources: dict[str, SourceSpec]
     timeout_s: float = 45.0
     max_result_chars: int = 12_000
     config_path: Path | None = None
+    ranking: RankingSettings = field(default_factory=RankingSettings)
 
 
 def default_paths(environ: Mapping[str, str] = os.environ) -> list[Path]:
@@ -78,10 +106,10 @@ def load_settings(path: str | Path | None = None, environ: Mapping[str, str] = o
 
 
 def settings_from_mapping(data: Mapping[str, Any], config_path: Path | None = None) -> Settings:
-    unknown_top = set(data) - {"gateway", "sources"}
+    unknown_top = set(data) - {"gateway", "sources", "ranking"}
     if unknown_top:
         raise ConfigError(
-            f"unknown top-level keys: {sorted(unknown_top)} (expected [gateway] and [sources.*])"
+            f"unknown top-level keys: {sorted(unknown_top)} (expected [gateway], [ranking] and [sources.*])"
         )
 
     gateway = dict(data.get("gateway", {}))
@@ -100,6 +128,43 @@ def settings_from_mapping(data: Mapping[str, Any], config_path: Path | None = No
         timeout_s=float(gateway.get("timeout_seconds", 45.0)),
         max_result_chars=int(gateway.get("max_result_chars", 12_000)),
         config_path=config_path,
+        ranking=_ranking_settings(dict(data.get("ranking", {}))),
+    )
+
+
+def _ranking_settings(table: dict[str, Any]) -> RankingSettings:
+    unknown = set(table) - _RANKING_KEYS
+    if unknown:
+        raise ConfigError(f"unknown [ranking] keys: {sorted(unknown)}; allowed: {sorted(_RANKING_KEYS)}")
+    defaults = RankingSettings()
+
+    def numbers(key: str, allowed: tuple[str, ...], base: dict[str, float]) -> dict[str, float]:
+        given = dict(table.get(key, {}))
+        bad = set(given) - set(allowed)
+        if bad:
+            raise ConfigError(f"[ranking.{key}]: unknown keys {sorted(bad)}; allowed: {list(allowed)}")
+        try:
+            merged = {**base, **{k: float(v) for k, v in given.items()}}
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"[ranking.{key}]: values must be numbers") from exc
+        if any(v < 0 for v in merged.values()):
+            raise ConfigError(f"[ranking.{key}]: values must not be negative")
+        return merged
+
+    weights = numbers("weights", _WEIGHT_KEYS, defaults.weights)
+    total = sum(weights.values())
+    if total <= 0:
+        raise ConfigError("[ranking.weights]: at least one weight must be above zero")
+    half_life = numbers("half_life_months", _NEED_KEYS, defaults.half_life_months)
+    if any(v <= 0 for v in half_life.values()):
+        raise ConfigError("[ranking.half_life_months]: values must be above zero")
+    return RankingSettings(
+        weights={k: v / total for k, v in weights.items()},
+        per_query=max(1, min(int(table.get("per_query", defaults.per_query)), 25)),
+        max_queries=max(1, min(int(table.get("max_queries", defaults.max_queries)), 5)),
+        read_per_source=max(1, min(int(table.get("read_per_source", defaults.read_per_source)), 15)),
+        min_fit=max(0.0, min(float(table.get("min_fit", defaults.min_fit)), 1.0)),
+        half_life_months=half_life,
     )
 
 

@@ -9,9 +9,10 @@ Agents tend to build from what they remember from training: packages that may be
 and no idea that a better maintained project already exists. Open Intelligence makes "check what exists
 today" one tool call.
 
-> **Status: MVP.** Connectors and routing work. Ranking (the top 3 picks) is not built yet; it is being
-> researched in [docs/ranking-parameters.md](docs/ranking-parameters.md). Results today keep each
-> platform's own order.
+> **Status: MVP.** Connectors, routing and a first version of ranking (the top 3 picks per need) work.
+> The ranking's weights are a first hypothesis that has not been evaluated yet, and its GitHub side has not
+> been run against the live server (it needs a token). See
+> [docs/ranking-parameters.md](docs/ranking-parameters.md) for the parameters, the decisions and the limits.
 
 ## How it works
 
@@ -33,6 +34,16 @@ The router decides what the request needs, then which platforms serve that need:
 "Build a Python project that automates a Snowflake pipeline from Census" needs code only, so only GitHub is
 searched. "Fine-tune a sentiment classifier on our reviews" needs code, a base model and a dataset, so all
 three are. See [docs/architecture.md](docs/architecture.md) for the design.
+
+Then it ranks what it found, per need:
+
+1. **Gather** candidates with several phrasings, in the platform's order and in one popularity order.
+2. **Gate**: drop what is archived, licensed against your constraints, too old or too large, ships only
+   pickle weights, or does not match the need.
+3. **Score** the rest: fit 40%, evidence of quality 20%, health 15%, trust 15%, adoption 10%. Popularity
+   is a small part, measured against the other candidates and damped when the numbers look inflated.
+4. **Read** the README, model card or dataset card of the best few and score again.
+5. **Pick** a diverse top 3 and say why: reasons, warnings, and the checks that could not be made.
 
 ## Install
 
@@ -88,6 +99,7 @@ Any MCP client that can launch a stdio server works the same way: the command is
 
 | tool | what it does |
 | --- | --- |
+| `find_top_picks` | the main tool: route, search, gate, score, and return the top 3 per need with reasons |
 | `route_request` | which sources a request needs and why (offline, instant) |
 | `search_open_source` | route, then search each routed source in parallel; raw, unranked results |
 | `list_sources` | each source's endpoint and auth state; `check=true` also connects |
@@ -95,6 +107,19 @@ Any MCP client that can launch a stdio server works the same way: the command is
 | `call_source_tool` | call one allowed upstream tool, e.g. a README, a model card, dataset details |
 
 The server also offers the prompt `open_source_routing` for clients that cannot load skills.
+
+`find_top_picks` takes the task, up to three search phrasings per need (`queries`), what a pick must do
+(`must_have`) and the user's `constraints` (programming language, commercial use, ML library, data
+language, hardware limit). For each need it returns:
+
+- `picks`: rank, score and its five parts, `why`, must-haves covered and missing, facts (license, dates,
+  size, eval results), `warnings`, `unresolved_checks`;
+- `rejected`: what a gate removed, and why;
+- `platform_top`: what the platform's own order would have shown first, for comparison;
+- `verdict`: `picks`, `no_fit`, `no_candidates`, or `inconclusive` when a source could not be searched.
+
+The result also lists the assumptions made for constraints that were not given, and
+`questions_for_user`: only the questions whose answer would change the result.
 
 ### The routing skill
 
@@ -116,12 +141,16 @@ open-intelligence route "Python project to send data from Census to Snowflake"
 open-intelligence search "Fine-tune a sentiment classifier on product reviews" -q "sentiment" --limit 3
 ```
 
-`route` works offline. `search` calls the live servers.
+```bash
+open-intelligence picks "Find a German NER dataset" --need dataset -q "german ner" -q "germeval" --must-have "named entity recognition" --constraints '{"languages": ["de"], "commercial_use": true}'
+```
+
+`route` works offline. `search` (raw results) and `picks` (ranked top 3) call the live servers.
 
 ## Configuration (optional)
 
 Without a config file Open Intelligence uses the official remote servers. To change endpoints, run
-GitHub's server locally in Docker, or disable a source, copy
+GitHub's server locally in Docker, disable a source, or change the ranking weights, copy
 [`open-intelligence.example.toml`](open-intelligence.example.toml) to `./open-intelligence.toml` or
 `~/.config/open-intelligence/config.toml`.
 
@@ -142,16 +171,20 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The default test run is offline: fake upstream MCP servers stand in for the real ones. `pytest -m live`
-calls the real Hugging Face and Kaggle servers (and GitHub, if a token is set).
+The default test run is offline: fake upstream MCP servers stand in for the real ones, and the ranking
+tests run against output recorded from the real Hugging Face and Kaggle servers (`tests/fixtures`).
+`pytest -m live` calls the real Hugging Face and Kaggle servers (and GitHub, if a token is set) and checks
+that the parsers still read their formats.
 
 ## Roadmap
 
-1. **Connectors and routing** (this MVP).
-2. **Normalized candidates**: one record shape across the three platforms.
-3. **Ranking**: gates, use-case fit and evidence-based scoring for a top 3 per need
-   ([research](docs/ranking-parameters.md)).
-4. **Evaluation**: a golden set of real tasks to prove the ranking beats each platform's popularity sort.
+1. **Connectors and routing**: done.
+2. **Ranking, first version**: done. Gates, use-case fit and evidence-based scoring for a top 3 per need
+   ([parameters and decisions](docs/ranking-parameters.md)).
+3. **Evaluation**: a golden set of real tasks to prove the ranking beats each platform's popularity sort,
+   and to calibrate the weights. Not started.
+4. **More evidence**: security advisories and OpenSSF Scorecard for repositories, task leaderboards for
+   models, schema and quality checks for datasets, fit judged by meaning instead of by words.
 
 ## License
 
