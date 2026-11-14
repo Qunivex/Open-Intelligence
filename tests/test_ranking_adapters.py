@@ -36,9 +36,18 @@ def hugging_face(kind: str) -> dict[str, Candidate]:
         for c in adapter.parse_search(outcome(name), 10):
             found.setdefault(c.id, c)
     recorded = json.loads((FIXTURES / "hf_fs.json").read_text(encoding="utf-8"))
-    for call in adapter.enrich_calls(list(found.values())):
+    calls = adapter.enrich_calls(list(found.values()))
+    for call in calls:
         if call.label == "details":
             adapter.apply(found, call, outcome(f"hf_details_{kind}.md"))
+    previews = json.loads((FIXTURES / "hf_preview.json").read_text(encoding="utf-8"))
+    # One candidate at a time, so that every dataset in the fixture gets its sample rows read.
+    follow_ups = [call for c in found.values() for call in adapter.follow_up_calls([c])]
+    for call in [*calls, *follow_ups]:
+        if call.label == "details":
+            continue
+        if call.label == "preview":
+            adapter.apply(found, call, outcome(text=previews[call.targets[0]]))
             continue
         results = []
         for index, op in enumerate(call.arguments["operations"]):
@@ -319,3 +328,144 @@ def test_github_readme_and_release() -> None:
     )
     assert unknown.has_releases is None
     assert unknown.read_notes == ["latest release could not be read"]
+
+
+# --- model card eval results ----------------------------------------------------------------------
+
+
+def test_model_index_records_what_each_number_was_measured_on() -> None:
+    front = (
+        "model-index:\n- name: demo\n  results:\n  - task:\n      type: automatic-speech-recognition\n"
+        "    dataset:\n      name: LibriSpeech (clean)\n      type: librispeech_asr\n      config: clean\n"
+        "      split: test\n      args:\n        language: en\n    metrics:\n    - name: Test WER\n"
+        "      type: wer\n      value: 3.43\n      source:\n        name: someone else\n"
+        "        url: https://example.test\n  - task:\n      type: automatic-speech-recognition\n"
+        "    dataset:\n      name: LibriSpeech (other)\n      type: librispeech_asr\n      config: other\n"
+        "      split: test\n    metrics:\n    - type: wer\n      value: 7.63\n"
+    )
+    clean, other = A.read_model_index(front)
+    assert clean.benchmark == ("librispeech-asr", "clean", "test", "wer")
+    assert clean.benchmark_name == "wer on librispeech_asr clean test"
+    assert clean.value == pytest.approx(3.43)
+    assert other.benchmark == ("librispeech-asr", "other", "test", "wer")  # a different benchmark
+    assert clean.metric == "wer"  # not the name of its "source" block
+
+
+# --- dataset structure and sample rows (recorded) -------------------------------------------------
+
+
+def test_hf_dataset_structure_from_the_viewer() -> None:
+    found = hugging_face("dataset")
+    telco = found["aai510-group1/telco-customer-churn"].structure
+    assert telco is not None
+    assert telco.splits == {"default/test": 1400.0, "default/train": 4200.0, "default/validation": 1400.0}
+    assert telco.total_rows == 7000
+    assert telco.has_held_out_split is True
+    assert telco.preview_of == ("default", "train")
+    assert len(telco.columns) == telco.column_count == 52
+    # Sample rows were read: this dataset has empty cells in its first rows.
+    assert telco.sample_rows == 12
+    assert telco.sample_empty_cells and telco.sample_empty_cells > 0
+    assert telco.sample_duplicate_rows == 0
+
+    single = found["d0r1h/customer_churn"].structure
+    assert single is not None
+    assert single.splits == {"default/train": 37000.0}
+    assert single.has_held_out_split is False
+    assert "age" in single.columns
+
+
+def test_hf_datasets_the_hub_cannot_load_are_told_apart_from_a_busy_viewer() -> None:
+    found = hugging_face("dataset")
+    # "The dataset generation failed": a property of the dataset.
+    broken = found["kalhosni/CustomerChurnTelecom"]
+    assert "viewer_failed" in broken.flags
+    assert broken.structure is not None and broken.structure.total_rows is None  # rows unknown, not zero
+    # A timeout while fetching sample rows (as recorded): a property of the moment.
+    busy = found["d0r1h/customer_churn"]
+    assert "viewer_unavailable" in busy.flags
+    assert "viewer_failed" not in busy.flags
+    assert busy.structure is not None and busy.structure.sample_rows is None
+
+
+def test_dataset_viewer_messages() -> None:
+    script = "### Configs and Splits\n\n> Could not fetch splits from Dataset Viewer: 501 Not Implemented: runs arbitrary Python code"
+    assert A.read_dataset_structure(script) is None
+    for busy in (
+        "429 Too Many Requests: <html>",
+        "502 Bad Gateway",
+        "API request failed: The operation was aborted due to timeout",
+    ):
+        assert A._viewer_is_busy(f"> Could not fetch rows from Dataset Viewer: {busy}")
+    assert not A._viewer_is_busy(
+        "> Could not fetch rows from Dataset Viewer: 500 Internal Server Error: generation failed"
+    )
+    assert not A._viewer_is_busy("| default | train | 502 | — | 2 | 1 MB |")
+
+
+def test_sample_rows_count_empty_cells_and_repeats() -> None:
+    preview = (
+        "## Dataset Preview\n\n### Features\n\n| # | Column | Type |\n|---:|---|---|\n| 1 | text | {} |\n| 2 | label | {} |\n\n"
+        "### Rows\n\n| # | text | label |\n|---:|---|---|\n"
+        "| 0 | good film | pos |\n| 1 | bad film | neg |\n| 2 | good film | pos |\n| 3 |  | neg |\n| 4 | a \\| b | null |\n"
+    )
+    structure = A.DatasetStructure()
+    A.read_sample_rows(structure, preview)
+    assert structure.sample_rows == 5
+    assert structure.sample_duplicate_rows == 1
+    assert structure.sample_empty_cells == 2  # one blank cell, one "null"
+
+
+def test_only_the_leading_datasets_get_sample_rows_read() -> None:
+    adapter = A.HuggingFace("dataset")
+    many = []
+    for n in range(7):
+        c = Candidate(source="huggingface", need="dataset", id=f"o/d{n}", url="u")
+        c.structure = A.DatasetStructure(splits={"default/train": 10.0}, preview_of=("default", "train"))
+        many.append(c)
+    many[1].flags.add("viewer_failed")
+    calls = adapter.follow_up_calls(many)
+    assert [call.targets[0] for call in calls] == ["o/d0", "o/d2", "o/d3"]
+    assert calls[0].arguments["operations"] == ["dataset_preview"]
+    assert A.HuggingFace("model").follow_up_calls(many) == []
+
+
+def test_kaggle_file_summary() -> None:
+    adapter = A.KaggleDatasets()
+    c = adapter._new("blastchar/telco-customer-churn", "u")
+    _, files = adapter.enrich_calls([c])
+    assert files.tool == "get_dataset_files_summary"
+    summary = json.loads((FIXTURES / "kaggle_files_summary.json").read_text(encoding="utf-8"))[c.id]
+    adapter.apply({c.id: c}, files, outcome(text=json.dumps(summary)))
+    assert c.structure is not None
+    assert c.structure.file_types == [".csv"]
+    assert c.structure.column_count == 21
+    assert not c.enriched  # the description is a separate call
+
+
+# --- browsing a Hub task --------------------------------------------------------------------------
+
+
+def test_a_phrasing_that_names_a_hub_task_browses_it_instead_of_searching_names() -> None:
+    assert A.hub_task("Sentence similarity") == "sentence-similarity"
+    assert A.hub_task("automatic_speech_recognition") == "automatic-speech-recognition"
+    assert A.hub_task("sentence embeddings") is None
+
+    calls = A.HuggingFace("model").search_calls(["german ner", "token classification"], 10, ["de"])
+    by_label = {c.label: c.arguments for c in calls}
+    assert list(by_label) == [
+        "german ner",
+        "german ner (most downloads)",
+        "task token-classification (most downloads)",
+    ]
+    browse = by_label["task token-classification (most downloads)"]
+    assert "query" not in browse  # the standard models rarely carry the task in their name
+    assert browse["filters"] == ["token-classification", "de"]
+    assert browse["sort"] == "downloads"  # never "trending": that fills the list with this week's uploads
+    assert [c.baseline for c in calls] == [True, False, False]  # the baseline stays the first name search
+
+    (dataset_browse,) = A.HuggingFace("dataset").search_calls(["question answering"], 5, None)
+    assert dataset_browse.arguments["filters"] == ["task_categories:question-answering"]
+    assert dataset_browse.baseline
+    # Other platforms take the hint and ignore it.
+    assert A.KaggleDatasets().search_calls(["question answering"], 5, ["en"])[0].tool == "search_datasets"

@@ -11,6 +11,7 @@ import pytest
 from open_intelligence.connector import Connector
 from open_intelligence.ranking import Constraints, Ranker, RankRequest
 from open_intelligence.ranking.engine import _questions
+from open_intelligence.ranking.evidence import SecurityLookup
 from open_intelligence.ranking.models import Candidate
 from open_intelligence.ranking.scoring import PARTS, Scored
 from tests.conftest import SECRET, ranked
@@ -21,9 +22,43 @@ NOW = datetime(2026, 11, 13, tzinfo=UTC)
 ACME = "example-acme/census-snowflake-sync"
 
 
-async def find(connector: Connector, **request: Any) -> dict[str, Any]:
+async def find(
+    connector: Connector, security: SecurityLookup | None = None, **request: Any
+) -> dict[str, Any]:
     request.setdefault("constraints", Constraints())
-    return await Ranker(connector, now=lambda: NOW).find(RankRequest(**request))
+    return await Ranker(connector, now=lambda: NOW, security=security).find(RankRequest(**request))
+
+
+def security_api(advisory_score: float | None = None) -> SecurityLookup:
+    """deps.dev and Scorecard answers for the hand-written repository example-acme/census-snowflake-sync."""
+    package = "https://api.deps.dev/v3/systems/pypi/packages/census-snowflake-sync"
+    key = {"system": "PYPI", "name": "census-snowflake-sync", "version": "2.3.0"}
+    responses: dict[str, tuple[int, Any]] = {
+        f"https://api.scorecard.dev/projects/github.com/{ACME}": (
+            200,
+            {"date": "2026-11-09", "score": 8.1, "checks": [{"name": "Maintained", "score": 10}]},
+        ),
+        package: (200, {"versions": [{"versionKey": key, "isDefault": True}]}),
+        f"{package}/versions/2.3.0": (
+            200,
+            {
+                "versionKey": key,
+                "advisoryKeys": [{"id": "GHSA-test-0001"}] if advisory_score else [],
+                "relatedProjects": [
+                    {"projectKey": {"id": f"github.com/{ACME}"}, "relationType": "SOURCE_REPO"}
+                ],
+            },
+        ),
+        "https://api.deps.dev/v3/advisories/GHSA-test-0001": (
+            200,
+            {"title": "Credentials written to the log", "cvss3Score": advisory_score, "aliases": []},
+        ),
+    }
+
+    async def fetch(url: str) -> tuple[int, Any]:
+        return responses.get(url, (404, None))
+
+    return SecurityLookup(fetch=fetch)
 
 
 def need(result: dict[str, Any], name: str) -> dict[str, Any]:
@@ -53,7 +88,7 @@ async def test_code_request_gates_scores_and_explains(ranked_connector: Connecto
     # The fork with the same name is not a second option.
     assert pick["also_available_as"] == ["example-forky/census-snowflake-sync"]
     assert "written in Python" in pick["why"]
-    assert any("vulnerabilities were not checked" in note for note in pick["unresolved_checks"])
+    assert any("known vulnerabilities were not looked up" in note for note in pick["unresolved_checks"])
 
     rejected = {r["id"]: r["gate"] for r in code["rejected"]}
     assert rejected == {
@@ -158,12 +193,19 @@ async def test_datasets_ranked_and_notebooks_inconclusive_without_a_kaggle_token
     datasets = need(result, "dataset")
     assert datasets["verdict"] == "picks"
     assert {p["source"] for p in datasets["picks"]} <= {"huggingface", "kaggle"}
-    kaggle_pick = next((p for p in datasets["picks"] if p["source"] == "kaggle"), None)
-    if kaggle_pick is not None:
-        assert any("usability" in reason for reason in kaggle_pick["why"])
-    # Telco Customer Churn is Kaggle's first result; its license is not a grant, and the pick says so.
-    everything = datasets["picks"] + datasets["runners_up"]
-    assert "blastchar/telco-customer-churn" in {e["id"] for e in everything}
+    by_id = {p["id"]: p for p in datasets["picks"]}
+    kaggle_pick = next(p for p in datasets["picks"] if p["source"] == "kaggle")
+    assert any("usability" in reason for reason in kaggle_pick["why"])
+    assert kaggle_pick["facts"]["file_types"] == [".csv"]
+    assert any("not available from Kaggle" in note for note in kaggle_pick["unresolved_checks"])
+    # Structure read from the Hub's viewer shows up as facts and reasons on Hugging Face picks.
+    single_split = by_id["d0r1h/customer_churn"]
+    assert single_split["facts"]["splits"] == {"default/train": "37.0K"}
+    assert "age" in single_split["facts"]["columns"]
+    assert "no test or validation split: hold some data out yourself" in single_split["why"]
+    # Its sample rows timed out when recorded: reported as not checked, not as a defect.
+    assert any("did not answer" in note for note in single_split["unresolved_checks"])
+    assert not any("cannot load" in w for w in single_split["warnings"])
 
     notebooks = need(result, "notebook")
     assert notebooks["verdict"] == "inconclusive"
@@ -206,3 +248,55 @@ def test_questions_are_asked_only_when_the_answer_would_change_the_result() -> N
     go = scored(source="github", need="code", id="a/go", license="mit", programming_language="Go")
     (question,) = _questions(Constraints(), [python, go], [python, go])
     assert question.startswith("Which programming language")
+
+
+async def test_security_evidence_is_shown_on_repository_picks(ranked_connector: Connector) -> None:
+    result = await find(
+        ranked_connector,
+        security=security_api(),
+        task="Python project to automate a Snowflake pipeline that sends data from Census to Snowflake",
+        query="census snowflake",
+        must_have={"code": ["census api", "snowflake load"]},
+    )
+    (pick,) = need(result, "code")["picks"]
+    assert pick["id"] == ACME
+    assert "OpenSSF Scorecard 8.1/10, scanned 2026-11-09" in pick["why"]
+    assert "no known vulnerabilities affect pypi:census-snowflake-sync 2.3.0" in pick["why"]
+    assert pick["facts"]["openssf_scorecard"] == 8.1
+    assert pick["facts"]["package_checked"] == "pypi:census-snowflake-sync 2.3.0"
+    assert pick["facts"]["known_vulnerabilities"] == "none in the current release"
+    assert not any("were not looked up" in note for note in pick["unresolved_checks"])
+
+
+async def test_a_critical_vulnerability_removes_the_repository(ranked_connector: Connector) -> None:
+    result = await find(
+        ranked_connector,
+        security=security_api(advisory_score=9.8),
+        task="Python project to automate a Snowflake pipeline that sends data from Census to Snowflake",
+        query="census snowflake",
+        must_have={"code": ["census api", "snowflake load"]},
+    )
+    code = need(result, "code")
+    assert ACME not in {p["id"] for p in code["picks"]}
+    rejected = next(r for r in code["rejected"] if r["id"] == ACME)
+    assert rejected["gate"] == "security"
+    assert "GHSA-test-0001" in rejected["reason"]
+
+
+async def test_a_high_vulnerability_is_a_warning_not_a_gate(ranked_connector: Connector) -> None:
+    result = await find(
+        ranked_connector,
+        security=security_api(advisory_score=7.5),
+        task="Python project to automate a Snowflake pipeline that sends data from Census to Snowflake",
+        query="census snowflake",
+        must_have={"code": ["census api", "snowflake load"]},
+    )
+    (pick,) = need(result, "code")["picks"]
+    assert any("GHSA-test-0001 (high)" in w for w in pick["warnings"])
+    assert pick["facts"]["known_vulnerabilities"][0]["severity"] == "high"
+
+
+async def test_without_a_security_lookup_the_pick_says_so(ranked_connector: Connector) -> None:
+    result = await find(ranked_connector, task="Build a Snowflake Census pipeline", query="census snowflake")
+    pick = need(result, "code")["picks"][0]
+    assert any("were not looked up" in note for note in pick["unresolved_checks"])

@@ -18,16 +18,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import anyio
 
-from open_intelligence.config import RankingSettings
-from open_intelligence.connector import CallOutcome, Connector
-from open_intelligence.ranking.adapters import ADAPTERS, Adapter
+from open_intelligence.config import RankingSettings, Settings
+from open_intelligence.connector import CallOutcome
+from open_intelligence.ranking.adapters import ADAPTERS, Adapter, hub_task
+from open_intelligence.ranking.evidence import SecurityLookup
 from open_intelligence.ranking.licenses import classify
 from open_intelligence.ranking.models import Call, Candidate, Constraints
-from open_intelligence.ranking.scoring import PARTS, Scored, human, pick_diverse, score_group
+from open_intelligence.ranking.scoring import (
+    PARTS,
+    Scored,
+    benchmark_tables,
+    human,
+    pick_diverse,
+    score_group,
+)
 from open_intelligence.router import route
 from open_intelligence.sources import NEEDS, Need
 
@@ -62,16 +70,36 @@ class _SourceStatus:
 Planned = tuple[Adapter, Call]
 
 
+class Upstream(Protocol):
+    """What the pipeline needs from a connector: its settings, and a way to call upstream tools.
+
+    ``Connector`` is the real one; the evaluation's ``Recorder`` is another, which replays saved answers.
+    """
+
+    settings: Settings
+
+    async def call_many(
+        self,
+        source_id: str,
+        calls: list[tuple[str, dict[str, Any]]],
+        *,
+        full_text: bool = False,
+        concurrency: int = 1,
+    ) -> list[CallOutcome]: ...
+
+
 class Ranker:
     def __init__(
         self,
-        connector: Connector,
+        connector: Upstream,
         settings: RankingSettings | None = None,
         now: Callable[[], datetime] | None = None,
+        security: SecurityLookup | None = None,
     ) -> None:
         self.connector = connector
         self.settings = settings or connector.settings.ranking
         self._now = now or (lambda: datetime.now(UTC))
+        self.security = security or SecurityLookup(connector.settings.evidence)
 
     async def find(self, request: RankRequest) -> dict[str, Any]:
         settings, now = self.settings, self._now()
@@ -86,7 +114,7 @@ class Ranker:
                 queries = self._queries(request, need)
                 if adapter is None or not queries:
                     continue
-                calls = adapter.search_calls(queries, settings.per_query)
+                calls = adapter.search_calls(queries, settings.per_query, request.constraints.languages)
                 plan.setdefault(source_plan.source, []).extend((adapter, call) for call in calls)
         outcomes = await self._run(plan)
 
@@ -122,6 +150,7 @@ class Ranker:
         eligible: set[str] = set()
         for read_round in range(2):
             reading: dict[str, list[Planned]] = {}
+            batches: list[tuple[str, Adapter, list[Candidate]]] = []
             for need, pool in pools.items():
                 phrases, is_must = self._phrases(request, need)
                 scored = score_group(
@@ -132,6 +161,7 @@ class Ranker:
                     settings,
                     now,
                     final=read_round > 0,
+                    specifics=self._specifics(request, need),
                 )
                 for source in sorted({c.source for c in pool.values()}):
                     adapter = ADAPTERS[(source, need)]
@@ -146,16 +176,24 @@ class Ranker:
                         continue
                     batch = unread[: settings.read_per_source]
                     eligible.update(c.key for c in batch)
+                    batches.append((source, adapter, batch))
                     reading.setdefault(source, []).extend(
                         (adapter, call) for call in adapter.enrich_calls(batch)
                     )
             if not reading:
                 break
-            read = await self._run(reading)
-            for source, planned in reading.items():
-                for (adapter, call), outcome in zip(planned, read[source], strict=True):
-                    by_id = {c.id: c for c in pools[adapter.need].values() if c.source == source}
-                    adapter.apply(by_id, call, outcome)
+            await self._read(reading, pools)
+            # What can only be asked once the first answers are in (a dataset's sample rows need
+            # its config and split), and security evidence for the repositories just read.
+            follow_up: dict[str, list[Planned]] = {}
+            for source, adapter, batch in batches:
+                follow_up.setdefault(source, []).extend(
+                    (adapter, call) for call in adapter.follow_up_calls(batch)
+                )
+            await self._read(follow_up, pools)
+            await self.security.lookup_many(
+                [c for _, adapter, batch in batches if adapter.need == "code" for c in batch]
+            )
 
         # 5-6. Final scores, gates and picks, per need.
         results = []
@@ -169,7 +207,14 @@ class Ranker:
             pool = pools.get(need, {})
             phrases, is_must = self._phrases(request, need)
             scored = score_group(
-                list(pool.values()), phrases, is_must, request.constraints, settings, now, final=True
+                list(pool.values()),
+                phrases,
+                is_must,
+                request.constraints,
+                settings,
+                now,
+                final=True,
+                specifics=self._specifics(request, need),
             )
             in_running = [s for s in scored if s.candidate.key in eligible and not s.gate_failures]
             picks = pick_diverse(in_running, top)
@@ -206,6 +251,11 @@ class Ranker:
                 for s in in_running
                 if s.candidate.key not in chosen and s.candidate.id not in chosen
             ][:5]
+            if need == "model":
+                # Numbers from model cards, side by side, wherever two candidates report the same benchmark.
+                tables = benchmark_tables([s.candidate for s in in_running])
+                if tables:
+                    entry["benchmark_comparison"] = tables
             entry["considered"] = len(pool)
             entry["read_in_depth"] = sum(1 for c in pool.values() if c.enriched)
             entry["rejected"] = _rejected(scored)
@@ -224,11 +274,12 @@ class Ranker:
             },
             "questions_for_user": _questions(request.constraints, all_picks, contenders),
             "method": (
-                "Gates first (archived, license vs constraints, pickle-only weights, size, age, minimum fit), then a "
-                f"score per need: {', '.join(f'{name} {settings.weights[name]:.0%}' for name in PARTS)}. Fit is "
-                "lexical (word matching), adoption is a percentile among the candidates found. Unknown evidence "
-                "counts as neutral and is listed under unresolved_checks. The weights are a first hypothesis that "
-                "has not been calibrated against an evaluation set yet."
+                "Gates first (archived, a critical known vulnerability, license vs constraints, pickle-only weights, "
+                "size, age, minimum fit), then a score per need: "
+                f"{', '.join(f'{name} {settings.weights[name]:.0%}' for name in PARTS)}. Fit is lexical (word "
+                "matching), adoption is a percentile among the candidates found. Unknown evidence counts as "
+                "neutral and is listed under unresolved_checks. The weights are a first hypothesis: see "
+                "docs/evaluation.md for how they score against the seed evaluation set."
             ),
         }
 
@@ -246,6 +297,13 @@ class Ranker:
             return must, True
         return self._queries(request, need), False
 
+    def _specifics(self, request: RankRequest, need: str) -> list[str] | None:
+        """The search phrasings that say more than the name of a task category. None when there are
+        none, or when every phrasing is specific (then there is nothing to tell apart)."""
+        queries = self._queries(request, need)
+        specific = [q for q in queries if hub_task(q) is None]
+        return specific if specific and len(specific) < len(queries) else None
+
     async def _run(self, plan: dict[str, list[Planned]]) -> dict[str, list[CallOutcome]]:
         outcomes: dict[str, list[CallOutcome]] = {}
 
@@ -260,6 +318,17 @@ class Ranker:
                 if planned:
                     tg.start_soon(one, source, planned)
         return {source: outcomes.get(source, []) for source in plan}
+
+    async def _read(self, plan: dict[str, list[Planned]], pools: dict[Need, dict[str, Candidate]]) -> None:
+        """Run enrichment calls and let each adapter write what it learned onto its candidates."""
+        plan = {source: planned for source, planned in plan.items() if planned}
+        if not plan:
+            return
+        outcomes = await self._run(plan)
+        for source, planned in plan.items():
+            for (adapter, call), outcome in zip(planned, outcomes[source], strict=True):
+                by_id = {c.id: c for c in pools[adapter.need].values() if c.source == source}
+                adapter.apply(by_id, call, outcome)
 
 
 def _unique(items: list[str]) -> list[str]:
@@ -285,6 +354,24 @@ def _pick(rank: int, s: Scored) -> dict[str, Any]:
         "eval_results": [e.describe() for e in c.evals[:4]],
         "metrics": {k: (round(v, 2) if v < 10 else int(v)) for k, v in sorted(c.metrics.items())},
     }
+    if c.structure is not None:
+        facts["rows"] = human(c.structure.total_rows) if c.structure.total_rows else None
+        facts["splits"] = {
+            name: human(rows) if rows is not None else "unknown"
+            for name, rows in list(c.structure.splits.items())[:6]
+        }
+        facts["columns"] = c.structure.columns[:12] or c.structure.column_count
+        facts["label_classes"] = c.structure.label_names[:12]
+        facts["file_types"] = c.structure.file_types
+    if c.security is not None:
+        facts["openssf_scorecard"] = c.security.scorecard
+        facts["scorecard_scanned"] = c.security.scorecard_date
+        if c.security.package:
+            facts["package_checked"] = f"{c.security.package} {c.security.package_version}"
+        if c.security.advisories is not None:
+            facts["known_vulnerabilities"] = [
+                {"id": a.id, "severity": a.severity, "title": a.title} for a in c.security.advisories
+            ] or "none in the current release"
     out: dict[str, Any] = {
         "rank": rank,
         "id": c.id,

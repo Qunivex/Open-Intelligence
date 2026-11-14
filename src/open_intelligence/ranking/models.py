@@ -61,11 +61,86 @@ class EvalResult:
     metric: str
     value: float | None
     verified: bool = False
+    config: str = ""
+    split: str = ""
+
+    @property
+    def benchmark(self) -> tuple[str, str, str, str]:
+        """What the number was measured on. Two results are comparable only when all four agree:
+        accuracy on a training split says nothing about accuracy on a validation split."""
+
+        def norm(text: str) -> str:
+            return text.strip().lower().replace("_", "-")
+
+        return (norm(self.dataset), norm(self.config), norm(self.split), norm(self.metric))
+
+    @property
+    def benchmark_name(self) -> str:
+        where = " ".join(p for p in (self.dataset, self.config, self.split) if p)
+        return f"{self.metric} on {where}"
 
     def describe(self) -> str:
         value = "" if self.value is None else f" {self.value:.4g}"
         tag = "verified by Hugging Face" if self.verified else "self-reported"
         return f"{self.metric}{value} on {self.dataset} ({tag})"
+
+
+@dataclass
+class Advisory:
+    """One known vulnerability that affects the version a user would install today."""
+
+    id: str
+    title: str = ""
+    cvss: float | None = None
+
+    @property
+    def severity(self) -> str:
+        if self.cvss is None:
+            return "unknown severity"
+        if self.cvss >= 9:
+            return "critical"
+        if self.cvss >= 7:
+            return "high"
+        return "moderate" if self.cvss >= 4 else "low"
+
+
+@dataclass
+class SecurityEvidence:
+    """What OpenSSF Scorecard and the advisory databases say about a repository."""
+
+    scorecard: float | None = None  # 0..10
+    scorecard_date: str | None = None
+    scorecard_checks: dict[str, int] = field(default_factory=dict)
+    package: str | None = None  # the published package the advisories were checked for, e.g. "pypi:flask"
+    package_version: str | None = None
+    advisories: list[Advisory] | None = None  # None = not checked; [] = none affect that version
+    notes: list[str] = field(default_factory=list)  # what could not be checked, and why
+
+
+@dataclass
+class DatasetStructure:
+    """What a dataset's files look like, as far as the platform reports it."""
+
+    splits: dict[str, float | None] = field(default_factory=dict)  # "config/split" -> rows, if known
+    total_rows: float | None = None
+    columns: list[str] = field(default_factory=list)
+    column_count: int | None = None
+    label_names: list[str] = field(default_factory=list)  # classes of a ClassLabel column
+    file_types: list[str] = field(default_factory=list)
+    preview_of: tuple[str, str] | None = None  # (config, split) to read sample rows from
+    sample_rows: int | None = None  # rows looked at
+    sample_empty_cells: int | None = None
+    sample_duplicate_rows: int | None = None
+
+    @property
+    def split_names(self) -> set[str]:
+        return {name.rsplit("/", 1)[-1].lower() for name in self.splits}
+
+    @property
+    def has_held_out_split(self) -> bool | None:
+        if not self.splits:
+            return None
+        return bool(self.split_names & {"test", "validation", "val", "dev", "eval"})
 
 
 @dataclass
@@ -103,6 +178,8 @@ class Candidate:
     params: float | None = None
     doc_text: str = ""  # README / model card / dataset card, without front matter
     evals: list[EvalResult] = field(default_factory=list)
+    security: SecurityEvidence | None = None  # repositories; None = not looked up
+    structure: DatasetStructure | None = None  # datasets; None = not looked up
     enriched: bool = False
     read_notes: list[str] = field(default_factory=list)  # what could not be read
     found_by: list[str] = field(default_factory=list)

@@ -83,3 +83,24 @@ async def test_ranking_end_to_end(live: Connector) -> None:
     for pick in datasets["picks"]:
         assert pick["why"]
         assert pick["covers"]
+
+
+async def test_security_evidence_for_a_well_known_repository() -> None:
+    from open_intelligence.ranking.evidence import SecurityLookup
+    from open_intelligence.ranking.models import Candidate
+
+    flask = Candidate(
+        source="github", need="code", id="pallets/flask", url="u", programming_language="Python"
+    )
+    other = Candidate(
+        source="github", need="code", id="pytorch/pytorch", url="u", programming_language="Python"
+    )
+    await SecurityLookup().lookup_many([flask, other])
+    assert flask.security is not None
+    assert flask.security.scorecard is not None and 0 <= flask.security.scorecard <= 10
+    assert flask.security.package == "pypi:flask"
+    assert flask.security.advisories is not None  # checked, whatever the answer
+    # pytorch/pytorch publishes "torch": no same-named package points back, so nothing is claimed.
+    assert other.security is not None
+    assert other.security.package is None
+    assert other.security.advisories is None

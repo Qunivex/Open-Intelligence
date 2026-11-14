@@ -59,13 +59,30 @@ def make(source: str) -> MCPServer:
 
         @server.tool()
         def hub_repo_search(
-            query: str = "", repo_types: list[str] | None = None, limit: int = 20, sort: str = ""
+            query: str = "",
+            repo_types: list[str] | None = None,
+            limit: int = 20,
+            sort: str = "",
+            filters: list[str] | None = None,
         ) -> str:
             kind = (repo_types or ["model"])[0]
             return _text(f"hf_search_{kind}{'_downloads' if sort == 'downloads' else ''}.md")
 
+        previews = _data("hf_preview.json")
+
         @server.tool()
-        def hub_repo_details(repo_ids: list[str], repo_type: str = "model") -> str:
+        def hub_repo_details(
+            repo_ids: list[str],
+            repo_type: str = "model",
+            operations: list[str] | None = None,
+            config: str = "",
+            split: str = "",
+            limit: int = 5,
+        ) -> str:
+            if operations and "dataset_preview" in operations:
+                if repo_ids[0] not in previews:
+                    raise ToolError("no preview recorded")
+                return str(previews[repo_ids[0]])
             return _text(f"hf_details_{repo_type}.md")
 
         @server.tool()
@@ -83,6 +100,7 @@ def make(source: str) -> MCPServer:
 
     else:
         info = _data("kaggle_dataset_info.json")
+        summaries = _data("kaggle_files_summary.json")
 
         @server.tool()
         def search_datasets(request: dict[str, Any]) -> str:
@@ -94,6 +112,13 @@ def make(source: str) -> MCPServer:
             if ref not in info:
                 raise ToolError("Not found")
             return json.dumps(info[ref])
+
+        @server.tool()
+        def get_dataset_files_summary(request: dict[str, Any]) -> str:
+            ref = f"{request.get('ownerSlug')}/{request.get('datasetSlug')}"
+            if ref not in summaries:
+                raise ToolError("Not found")
+            return json.dumps(summaries[ref])
 
         @server.tool()
         def list_models(request: dict[str, Any]) -> str:

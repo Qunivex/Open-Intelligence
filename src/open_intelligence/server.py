@@ -51,6 +51,8 @@ library, data language, hardware limit). Do not guess the rest. Ask the user onl
 - Each pick says why it ranked (`why`, `scores`), what is risky (`warnings`) and what was not verified \
 (`unresolved_checks`). Relay those; never call a pick safe or "the best". The score is a first hypothesis, \
 not a guarantee.
+- The ranking is not yet proven better than the platforms' own order. When `platform_top` holds the option \
+everyone in the field uses and the picks do not, say so and let the user choose.
 - `inconclusive` is not `no_candidates`: a source could not be searched. Fix the error and retry instead of \
 concluding nothing exists.
 - search_open_source returns raw, unranked results: use it to explore vocabulary, not to recommend.
@@ -112,8 +114,11 @@ def build_server(connector: Connector) -> MCPServer:
             Field(
                 description=(
                     "Up to 3 search phrasings per need, in that platform's vocabulary, e.g. "
-                    "{'dataset': ['german ner', 'germeval', 'german named entity recognition']}. "
-                    "Different phrasings find different candidates."
+                    "{'dataset': ['german ner', 'germeval', 'token classification']}. Different phrasings find "
+                    "different candidates. For models and datasets, make one phrasing exactly the Hub's task "
+                    "name ('sentence similarity', 'text classification', 'question answering'): it browses that "
+                    "task's most-downloaded entries, which reaches standard models whose names do not say what "
+                    "they do. Keep the others specific."
                 )
             ),
         ] = None,
@@ -137,11 +142,14 @@ def build_server(connector: Connector) -> MCPServer:
         """Find, gate, score and explain the top open-source picks for each need of a request.
 
         Searches the routed sources with every phrasing, drops candidates that fail a gate (archived,
-        license against the constraints, pickle-only weights, size, age, poor fit), scores the rest on
-        fit, quality evidence, health, trust and adoption, reads the README or card of the best few,
-        and returns a diverse top N per need. Each pick carries its reasons, warnings and the checks
-        that could not be made; `rejected` says what was filtered out and why; `platform_top` shows
-        what the platform's own order would have put first; `questions_for_user` lists what to ask.
+        a critical known vulnerability, license against the constraints, pickle-only weights, size,
+        age, poor fit), scores the rest on fit, quality evidence, health, trust and adoption, reads
+        the best few (README, card, files; OpenSSF Scorecard and known vulnerabilities for
+        repositories; eval results for models; splits, columns and sample rows for datasets), and
+        returns a diverse top N per need. Each pick carries its reasons, warnings and the checks that
+        could not be made; `rejected` says what was filtered out and why; `platform_top` shows what
+        the platform's own order would have put first; `benchmark_comparison` sets model eval numbers
+        side by side; `questions_for_user` lists what to ask.
         """
         request = RankRequest(
             task=task,

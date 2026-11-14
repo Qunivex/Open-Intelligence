@@ -34,6 +34,7 @@ _SOURCE_KEYS = {
     "allowed_tools",
 }
 _GATEWAY_KEYS = {"timeout_seconds", "max_result_chars"}
+_EVIDENCE_KEYS = {"scorecard", "advisories", "scorecard_url", "deps_dev_url", "timeout_seconds"}
 _RANKING_KEYS = {"weights", "per_query", "max_queries", "read_per_source", "min_fit", "half_life_months"}
 _WEIGHT_KEYS = ("fit", "quality", "health", "trust", "adoption")
 _NEED_KEYS = ("code", "model", "dataset", "notebook")
@@ -70,12 +71,24 @@ class RankingSettings:
 
 
 @dataclass(frozen=True)
+class EvidenceSettings:
+    """Security evidence for repositories, from public APIs that are not MCP servers."""
+
+    scorecard: bool = True  # OpenSSF Scorecard
+    advisories: bool = True  # known vulnerabilities in the current release, through deps.dev
+    scorecard_url: str = "https://api.scorecard.dev"
+    deps_dev_url: str = "https://api.deps.dev"
+    timeout_s: float = 20.0
+
+
+@dataclass(frozen=True)
 class Settings:
     sources: dict[str, SourceSpec]
     timeout_s: float = 45.0
     max_result_chars: int = 12_000
     config_path: Path | None = None
     ranking: RankingSettings = field(default_factory=RankingSettings)
+    evidence: EvidenceSettings = field(default_factory=EvidenceSettings)
 
 
 def default_paths(environ: Mapping[str, str] = os.environ) -> list[Path]:
@@ -106,10 +119,11 @@ def load_settings(path: str | Path | None = None, environ: Mapping[str, str] = o
 
 
 def settings_from_mapping(data: Mapping[str, Any], config_path: Path | None = None) -> Settings:
-    unknown_top = set(data) - {"gateway", "sources", "ranking"}
+    unknown_top = set(data) - {"gateway", "sources", "ranking", "evidence"}
     if unknown_top:
         raise ConfigError(
-            f"unknown top-level keys: {sorted(unknown_top)} (expected [gateway], [ranking] and [sources.*])"
+            f"unknown top-level keys: {sorted(unknown_top)} "
+            "(expected [gateway], [ranking], [evidence] and [sources.*])"
         )
 
     gateway = dict(data.get("gateway", {}))
@@ -129,6 +143,26 @@ def settings_from_mapping(data: Mapping[str, Any], config_path: Path | None = No
         max_result_chars=int(gateway.get("max_result_chars", 12_000)),
         config_path=config_path,
         ranking=_ranking_settings(dict(data.get("ranking", {}))),
+        evidence=_evidence_settings(dict(data.get("evidence", {}))),
+    )
+
+
+def _evidence_settings(table: dict[str, Any]) -> EvidenceSettings:
+    unknown = set(table) - _EVIDENCE_KEYS
+    if unknown:
+        raise ConfigError(f"unknown [evidence] keys: {sorted(unknown)}; allowed: {sorted(_EVIDENCE_KEYS)}")
+    defaults = EvidenceSettings()
+    urls = {}
+    for key in ("scorecard_url", "deps_dev_url"):
+        url = str(table.get(key, getattr(defaults, key))).rstrip("/")
+        if not url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise ConfigError(f"[evidence] {key} must be an https URL")
+        urls[key] = url
+    return EvidenceSettings(
+        scorecard=bool(table.get("scorecard", defaults.scorecard)),
+        advisories=bool(table.get("advisories", defaults.advisories)),
+        timeout_s=float(table.get("timeout_seconds", defaults.timeout_s)),
+        **urls,
     )
 
 

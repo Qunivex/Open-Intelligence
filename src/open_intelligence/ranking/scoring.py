@@ -24,11 +24,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import fmean
+from typing import Any
 
 from open_intelligence.config import RankingSettings
-from open_intelligence.ranking.adapters import has_safe_weights, pickle_only
+from open_intelligence.ranking.adapters import has_safe_weights, hub_task, pickle_only
 from open_intelligence.ranking.licenses import LICENSE_TRUST, classify
-from open_intelligence.ranking.models import Candidate, Constraints
+from open_intelligence.ranking.models import Candidate, Constraints, EvalResult
 from open_intelligence.ranking.text import Vocabulary, coverage, jaccard
 
 NEUTRAL = 0.5
@@ -147,9 +148,23 @@ def _constraint_factor(
     return factor, notes
 
 
+GENERIC_ONLY = 0.75  # fit kept by a candidate that matches the task category but no specific phrasing
+
+
 def fit_part(
-    c: Candidate, phrases: list[str], must_have: bool, constraints: Constraints
+    c: Candidate,
+    phrases: list[str],
+    must_have: bool,
+    constraints: Constraints,
+    specifics: list[str] | None = None,
 ) -> tuple[Part, list[str], list[str]]:
+    """How well a candidate matches what was asked for.
+
+    ``specifics`` are the search phrasings that are not just the name of a task category. Everything
+    filed under "question answering" matches the words "question answering"; only some of it also
+    matches "squad" or "reading comprehension". A candidate that matches the category alone keeps
+    ``GENERIC_ONLY`` of its fit.
+    """
     strong = Vocabulary(
         [
             c.id,
@@ -159,6 +174,8 @@ def fit_part(
             c.task or "",
             c.library or "",
             c.programming_language or "",
+            # A dataset's column names and label classes say what is in it ("tokens", "ner_tags").
+            " ".join(c.structure.columns + c.structure.label_names) if c.structure else "",
         ]
     )
     weak = Vocabulary([c.doc_text])
@@ -166,6 +183,7 @@ def fit_part(
     covered: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
+    specific = max((coverage(q, strong, weak) for q in specifics or [] if q.strip()), default=None)
     if not scores:
         core = NEUTRAL
     elif must_have:
@@ -173,10 +191,17 @@ def fit_part(
         covered = [p for p, v in scores if v >= COVERED_AT]
         missing = [p for p, v in scores if v < COVERED_AT]
         reasons.append(f"covers {len(covered)} of {len(scores)} must-haves")
+        if specific is not None:
+            core *= GENERIC_ONLY + (1 - GENERIC_ONLY) * specific
     else:
         best, core = max(scores, key=lambda pv: pv[1])
+        if specific is not None and hub_task(best) is not None:
+            # The best match is the category name itself: worth less than matching a specific phrasing.
+            core = max(specific, GENERIC_ONLY * core)
         if core >= COVERED_AT:
             reasons.append(f"matches '{best}'")
+    if specific is not None and specific < COVERED_AT and core > 0:
+        reasons.append("matches the task category, but none of the specific search phrasings")
     factor, notes = _constraint_factor(c, constraints, strong, weak)
     return Part(core * factor, reasons + notes), covered, missing
 
@@ -236,7 +261,7 @@ def _quality_code(c: Candidate, s: Scored) -> Part:
     return Part(_mix([(0.5, documented), (0.3, release), (0.2, 1.0 if tests else 0.3)]), reasons)
 
 
-def _quality_model(c: Candidate, s: Scored) -> Part:
+def _quality_model(c: Candidate, s: Scored, standings: list[Standing]) -> Part:
     doc, reasons = c.doc_text, []
     cut_off = "card_cut_off" in c.flags  # the card's text was not reached: unknown, not empty
     evals: float | None
@@ -244,6 +269,11 @@ def _quality_model(c: Candidate, s: Scored) -> Part:
         verified = any(e.verified for e in c.evals)
         evals = 1.0 if verified else 0.7
         reasons.append(f"eval results in the card: {c.evals[0].describe()}")
+        if standings:
+            # Where other candidates report the same benchmark, the numbers are compared: the best of
+            # the group gains, the worst loses. Without a shared benchmark nothing changes.
+            evals = min(1.0, max(0.0, evals + 0.3 * (fmean(st.percentile for st in standings) - 0.5)))
+            reasons.extend(st.describe() for st in standings[:2])
     elif (
         c.enriched
         and doc
@@ -271,6 +301,80 @@ def _quality_model(c: Candidate, s: Scored) -> Part:
     return Part(_mix([(0.6, evals), (0.4, card)]), reasons)
 
 
+_VIEWER_BUSY = "the Hub's dataset viewer did not answer (rate limit or outage)"
+_TABULAR_FILES = frozenset({".csv", ".tsv", ".parquet", ".json", ".jsonl", ".sqlite", ".xlsx", ".feather"})
+
+
+def _structure_score(c: Candidate, s: Scored, reasons: list[str]) -> float | None:
+    """What the files themselves show: can it be loaded, is it split, are labels named, is the head clean."""
+    structure = c.structure
+    if c.source == "kaggle":
+        if structure is None:
+            return None
+        kinds = ", ".join(structure.file_types) or "unknown"
+        columns = f"{structure.column_count} columns in " if structure.column_count else ""
+        reasons.append(f"{columns}{kinds} files")
+        s.unresolved.append(
+            "row counts and sample rows are not available from Kaggle, so rows were not checked"
+        )
+        tabular = bool(set(structure.file_types) & _TABULAR_FILES)
+        return (0.65 if tabular else 0.45) + (0.05 if structure.column_count else 0.0)
+    if "loading_script" in c.flags:
+        s.warnings.append(
+            "loads through a Python script in the repository: the Hub's viewer cannot read it, and current "
+            "versions of the datasets library do not run such scripts"
+        )
+        return 0.15
+    if "viewer_failed" in c.flags:
+        s.warnings.append("the Hub's viewer cannot load its rows: loading it yourself may fail too")
+        return 0.3
+    if structure is None:
+        if "viewer_unavailable" in c.flags:
+            s.unresolved.append(_VIEWER_BUSY + ", so structure and rows were not checked")
+            return None
+        if "no_viewer" in c.flags:
+            s.unresolved.append(
+                "the Hub's viewer could not read its files, so structure and rows were not checked"
+            )
+            return 0.35
+        return None
+    score = 0.6
+    if structure.splits:
+        shown = ", ".join(
+            f"{name.rsplit('/', 1)[-1]} {human(rows) if rows is not None else '(rows unknown)'}"
+            for name, rows in list(structure.splits.items())[:4]
+        )
+        reasons.append(f"splits: {shown}")
+    if structure.has_held_out_split:
+        score += 0.15
+    elif structure.splits:
+        reasons.append("no test or validation split: hold some data out yourself")
+    if structure.label_names:
+        score += 0.1
+        reasons.append(f"label classes are named ({', '.join(structure.label_names[:6])})")
+    if structure.total_rows is not None and structure.total_rows < 200:
+        score -= 0.2
+        s.warnings.append(f"very small: {structure.total_rows:.0f} rows")
+    if structure.sample_rows:
+        rows = structure.sample_rows
+        if structure.sample_duplicate_rows:
+            score -= 0.25
+            s.warnings.append(f"{structure.sample_duplicate_rows} repeated rows among the first {rows}")
+        elif structure.sample_empty_cells:
+            score -= 0.05
+            s.warnings.append(
+                f"{structure.sample_empty_cells} empty cells in the first {rows} rows: it has missing values"
+            )
+        else:
+            score += 0.15
+            reasons.append(f"no empty cells or repeated rows in the first {rows} rows")
+    elif "viewer_unavailable" in c.flags:
+        s.unresolved.append(_VIEWER_BUSY + ", so sample rows were not checked")
+    else:
+        s.unresolved.append("sample rows were not read")
+    return min(1.0, max(0.0, score))
+
+
 def _quality_dataset(c: Candidate, s: Scored) -> Part:
     doc, reasons = c.doc_text, []
     card = (0.6 * _share(_DATASET_CARD, doc) + 0.4 * min(1.0, len(doc) / 2500)) if doc else None
@@ -282,30 +386,120 @@ def _quality_dataset(c: Candidate, s: Scored) -> Part:
             )
         if c.enriched and not doc:
             card = 0.05
-        return Part(_mix([(0.6, usability), (0.4, card)]), reasons)
+        structure = _structure_score(c, s, reasons)
+        return Part(_mix([(0.45, usability), (0.25, card), (0.3, structure)]), reasons)
     tags = " ".join(c.tags).lower()
     described = [
         k in tags for k in ("task_categories:", "language:", "size_categories:", "license:", "format:")
     ]
     meta = sum(described) / len(described) if c.tags else None
-    if "format:parquet" in tags or "library:datasets" in tags:
-        reasons.append("loads with the datasets library (viewer available)")
     if c.enriched and not doc and "card_cut_off" not in c.flags:
         card = 0.05
         reasons.append("dataset card is empty")
     elif not c.enriched:
         s.unresolved.append("dataset card was not read")
-    return Part(_mix([(0.6, card), (0.4, meta)]), reasons)
+    structure = _structure_score(c, s, reasons)
+    return Part(_mix([(0.4, card), (0.2, meta), (0.4, structure)]), reasons)
 
 
-def quality_part(c: Candidate, s: Scored) -> Part:
+def quality_part(c: Candidate, s: Scored, standings: list[Standing] | None = None) -> Part:
     if c.need == "code":
         return _quality_code(c, s)
     if c.need == "model":
-        return _quality_model(c, s)
+        return _quality_model(c, s, standings or [])
     if c.need == "dataset":
         return _quality_dataset(c, s)
     return Part(None)
+
+
+# --- benchmark comparison -------------------------------------------------------------------------
+
+_LOWER_IS_BETTER = re.compile(r"loss|wer|cer|error|perplexity|ppl|mae|mse|rmse|\bter\b")
+_BOUNDED = re.compile(
+    r"accuracy|acc\b|f1|precision|recall|auc|exact|\bem\b|map|mrr|ndcg|bleu|rouge|wer|cer|meteor|chrf"
+)
+
+
+@dataclass
+class Standing:
+    """One candidate's place among the candidates that report the same benchmark."""
+
+    benchmark: str
+    value: float
+    rank: int  # 1 = best
+    of: int
+    percentile: float  # 1 = best
+    verified: bool
+
+    def describe(self) -> str:
+        if self.rank == 1:
+            place = "best"
+        elif self.rank == self.of:
+            place = "last"
+        else:
+            place = {2: "2nd", 3: "3rd"}.get(self.rank, f"{self.rank}th")
+        return f"{self.benchmark}: {self.value:.4g}, {place} of the {self.of} candidates that report it"
+
+
+def _comparable(metric: str, value: float) -> float:
+    """Cards report bounded metrics as 0.91 or as 91: put both on one scale."""
+    return value / 100 if _BOUNDED.search(metric) and value > 1.5 else value
+
+
+def benchmark_groups(
+    candidates: list[Candidate],
+) -> dict[tuple[str, str, str, str], list[tuple[Candidate, EvalResult]]]:
+    """Eval results grouped by benchmark, for benchmarks at least two candidates report."""
+    groups: dict[tuple[str, str, str, str], list[tuple[Candidate, EvalResult]]] = {}
+    for c in candidates:
+        seen = set()
+        for result in c.evals:
+            if result.value is None or result.benchmark in seen:
+                continue
+            seen.add(result.benchmark)
+            groups.setdefault(result.benchmark, []).append((c, result))
+    return {key: entries for key, entries in groups.items() if len(entries) >= 2}
+
+
+def benchmark_standings(candidates: list[Candidate]) -> dict[str, list[Standing]]:
+    """For each candidate, where its numbers stand on every benchmark it shares with another candidate.
+
+    Only identical benchmarks are compared (same dataset, config, split and metric). The numbers
+    are mostly self-reported: a comparison says who claims more, and ``verified`` says who was checked.
+    """
+    standings: dict[str, list[Standing]] = {}
+    for (_, _, _, metric), entries in benchmark_groups(candidates).items():
+        sign = -1.0 if _LOWER_IS_BETTER.search(metric) else 1.0
+        oriented = [sign * _comparable(metric, r.value or 0.0) for _, r in entries]
+        for (c, result), value in zip(entries, oriented, strict=True):
+            standings.setdefault(c.key, []).append(
+                Standing(
+                    benchmark=result.benchmark_name,
+                    value=result.value or 0.0,
+                    rank=1 + sum(other > value for other in oriented),
+                    of=len(entries),
+                    percentile=_percentile(value, oriented),
+                    verified=result.verified,
+                )
+            )
+    return standings
+
+
+def benchmark_tables(candidates: list[Candidate], limit: int = 5) -> list[dict[str, Any]]:
+    """The comparisons themselves, best first, for the result: the reader should see the numbers."""
+    tables = []
+    for (_, _, _, metric), entries in benchmark_groups(candidates).items():
+        lower = bool(_LOWER_IS_BETTER.search(metric))
+        ordered = sorted(entries, key=lambda e: _comparable(metric, e[1].value or 0.0), reverse=not lower)
+        tables.append(
+            {
+                "benchmark": ordered[0][1].benchmark_name,
+                "better": "lower" if lower else "higher",
+                "results": [{"id": c.id, "value": r.value, "verified": r.verified} for c, r in ordered],
+            }
+        )
+    tables.sort(key=lambda t: -len(t["results"]))
+    return tables[:limit]
 
 
 # --- health ---------------------------------------------------------------------------------------
@@ -389,11 +583,46 @@ def trust_part(c: Candidate, s: Scored) -> Part:
             s.warnings.append("needs trust_remote_code: loading it runs code from the repository")
         pairs.append((0.3, safety))
     elif c.need == "code":
-        pairs.append((0.3, None))
-        s.unresolved.append("known vulnerabilities were not checked (advisory lookup is not built yet)")
+        pairs.append((0.3, _security_score(c, s, reasons)))
     if "access_restricted" in c.flags:
         s.warnings.append("its files could not be read without access: it is gated or private")
     return Part(_mix(pairs), reasons)
+
+
+def _security_score(c: Candidate, s: Scored, reasons: list[str]) -> float | None:
+    """OpenSSF Scorecard and known vulnerabilities in the release a user would install today."""
+    evidence = c.security
+    if evidence is None:
+        s.unresolved.append("OpenSSF Scorecard and known vulnerabilities were not looked up")
+        return None
+    scorecard: float | None = None
+    if evidence.scorecard is not None:
+        scorecard = evidence.scorecard / 10
+        when = f", scanned {evidence.scorecard_date}" if evidence.scorecard_date else ""
+        reasons.append(f"OpenSSF Scorecard {evidence.scorecard:.1f}/10{when}")
+        checks = evidence.scorecard_checks
+        if checks.get("Maintained") == 0:
+            s.warnings.append("Scorecard: no maintenance activity in the last 90 days")
+        if checks.get("Dangerous-Workflow") == 0:
+            s.warnings.append("Scorecard: a dangerous pattern in its CI workflows")
+        if 0 <= checks.get("Vulnerabilities", 10) <= 3:
+            s.warnings.append("Scorecard: open known vulnerabilities in the repository or its dependencies")
+    advisories: float | None = None
+    release = (
+        f"{evidence.package} {evidence.package_version}".strip() if evidence.package else "the latest release"
+    )
+    if evidence.advisories is None:
+        pass
+    elif not evidence.advisories:
+        advisories = 1.0
+        reasons.append(f"no known vulnerabilities affect {release}")
+    else:
+        worst = max((a.cvss or 0.0) for a in evidence.advisories)
+        advisories = 0.2 if worst >= 7 or any(a.cvss is None for a in evidence.advisories) else 0.5
+        listed = ", ".join(f"{a.id} ({a.severity})" for a in evidence.advisories[:3])
+        s.warnings.append(f"{len(evidence.advisories)} known vulnerabilities affect {release}: {listed}")
+    s.unresolved.extend(note for note in evidence.notes if note not in s.unresolved)
+    return _mix([(0.5, advisories), (0.5, scorecard)])
 
 
 # --- adoption -------------------------------------------------------------------------------------
@@ -483,6 +712,11 @@ def gate_failures(
         failures.append(("archived", "archived by its owner: no longer maintained"))
     if "private" in c.flags:
         failures.append(("private", "not public"))
+    critical = [a for a in (c.security.advisories or []) if (a.cvss or 0) >= 9] if c.security else []
+    if critical:
+        failures.append(
+            ("security", f"a critical known vulnerability affects its latest release: {critical[0].id}")
+        )
     kind = classify(c.license)
     if constraints.commercial_use and kind == "non-commercial":
         failures.append(("license", f"license {c.license} does not allow commercial use"))
@@ -527,16 +761,18 @@ def score_group(
     settings: RankingSettings,
     now: datetime,
     final: bool,
+    specifics: list[str] | None = None,
 ) -> list[Scored]:
     """Score candidates for one need (possibly from several sources), best first."""
     adoption: dict[str, tuple[Part, str | None]] = {}
     for source in {c.source for c in candidates}:
         adoption.update(adoption_parts([c for c in candidates if c.source == source]))
+    standings = benchmark_standings([c for c in candidates if c.need == "model"])
     scored = []
     for c in candidates:
         s = Scored(candidate=c)
-        s.parts["fit"], s.covered, s.missing = fit_part(c, phrases, must_have, constraints)
-        s.parts["quality"] = quality_part(c, s)
+        s.parts["fit"], s.covered, s.missing = fit_part(c, phrases, must_have, constraints, specifics)
+        s.parts["quality"] = quality_part(c, s, standings.get(c.key))
         s.parts["health"] = health_part(c, s, now, settings)
         s.parts["trust"] = trust_part(c, s)
         s.parts["adoption"], inflated = adoption.get(c.key, (Part(None), None))

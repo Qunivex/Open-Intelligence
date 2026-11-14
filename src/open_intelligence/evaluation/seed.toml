@@ -1,0 +1,287 @@
+# Seed golden set.
+#
+# This is a starting point to make the evaluation runnable, not the evaluation the project needs.
+# The grades below were written by the AI assistant that built the ranking, from general knowledge
+# of these fields and from what the searches returned on 2026-11-13/14. That is a conflict of
+# interest and a small sample. Replace it with tasks and grades from practitioners who have not
+# seen the ranking's output.
+#
+# Grades: 3 = the standard choice for the task, 2 = a good choice, 1 = usable with caveats
+# (off-domain, a re-upload or conversion of a better option, tiny, unvetted), 0 = off-task, broken
+# or not usable. Candidates with no grade count as 0 and are reported as unjudged.
+
+[meta]
+name = "seed"
+judged_by = "the AI assistant that built the ranking (seed grades; needs practitioner review)"
+
+# --- models ---------------------------------------------------------------------------------------
+
+[[tasks]]
+id = "sentiment-english-model"
+need = "model"
+task = "Classify the sentiment of English product reviews with a pretrained model"
+queries = ["sentiment analysis", "review sentiment", "text classification"]
+must_have = ["sentiment classification", "english"]
+constraints = { languages = ["en"] }
+
+[tasks.judgments]
+"huggingface:nlptown/bert-base-multilingual-uncased-sentiment" = 3 # trained on product reviews
+"huggingface:siebert/sentiment-roberta-large-english" = 3 # general English sentiment, incl. reviews
+"huggingface:distilbert/distilbert-base-uncased-finetuned-sst-2-english" = 2 # movie-review sentiment, the usual default
+"huggingface:cardiffnlp/twitter-roberta-base-sentiment-latest" = 2 # strong, but trained on tweets
+"huggingface:lxyuan/distilbert-base-multilingual-cased-sentiments-student" = 2
+"huggingface:tabularisai/multilingual-sentiment-analysis" = 2 # non-commercial license
+"huggingface:j-hartmann/sentiment-roberta-large-english-3-classes" = 2
+"huggingface:cardiffnlp/twitter-xlm-roberta-base-sentiment" = 1 # multilingual tweets
+"huggingface:mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis" = 1 # financial news: off-domain
+"huggingface:Xenova/distilroberta-finetuned-financial-news-sentiment-analysis" = 1 # a conversion of the above
+"huggingface:ProsusAI/finbert" = 1 # financial text: off-domain
+"huggingface:Noor-Khan/sentiment-analysis-movie-reviews" = 1 # unvetted community model
+"kaggle:gpreda/gemma2-sentiment-analysis" = 1
+"kaggle:yacharki/pre-trained-model-binary-cnn-nlp-amazon-reviews" = 1
+"kaggle:crowwick/distilbert-sentiment-amazon-reviews" = 1
+"kaggle:ruhul20/twitter-sentiment-analysis" = 1
+"kaggle:keras/bert" = 0 # a base model, not a sentiment model
+"kaggle:google/experts-bert" = 0
+
+[[tasks]]
+id = "speech-recognition-english-model"
+need = "model"
+task = "Transcribe English meeting recordings"
+queries = ["whisper", "speech recognition english", "automatic speech recognition"]
+must_have = ["speech recognition"]
+constraints = { languages = ["en"] }
+
+[tasks.judgments]
+"huggingface:openai/whisper-large-v3" = 3
+"huggingface:openai/whisper-large-v3-turbo" = 3
+"huggingface:distil-whisper/distil-large-v3" = 3 # English, much faster
+"huggingface:nvidia/parakeet-tdt-0.6b-v2" = 3
+"huggingface:openai/whisper-medium" = 2
+"huggingface:openai/whisper-small" = 2
+"huggingface:openai/whisper-base" = 2
+"huggingface:ggerganov/whisper.cpp" = 2 # converted weights for whisper.cpp
+"kaggle:keras/whisper" = 2
+"huggingface:openai/whisper-tiny" = 1
+"huggingface:facebook/wav2vec2-base-960h" = 1 # the previous generation
+"huggingface:jonatasgrosman/wav2vec2-large-xlsr-53-english" = 1
+"huggingface:vitouphy/wav2vec2-xls-r-300m-english" = 1
+"kaggle:qwen-lm/qwen2.5-omni" = 1 # a general audio-language model
+"kaggle:msxksm/whisper-medium-medical-pl" = 0 # Polish medical speech
+"kaggle:manojkumarcs28/sarvam-shuka-1-by-sarvam" = 0
+
+[[tasks]]
+id = "sentence-embeddings-english-model"
+need = "model"
+task = "Embed English documents for semantic search"
+queries = ["sentence embeddings", "text embedding", "sentence similarity"]
+must_have = ["sentence embeddings"]
+constraints = { languages = ["en"] }
+
+[tasks.judgments]
+"huggingface:sentence-transformers/all-MiniLM-L6-v2" = 3
+"huggingface:sentence-transformers/all-mpnet-base-v2" = 3
+"huggingface:sentence-transformers/all-MiniLM-L12-v2" = 3
+"huggingface:BAAI/bge-small-en-v1.5" = 3
+"huggingface:BAAI/bge-base-en-v1.5" = 3
+"huggingface:BAAI/bge-large-en-v1.5" = 3
+"huggingface:BAAI/bge-m3" = 3
+"huggingface:intfloat/e5-base-v2" = 3
+"huggingface:intfloat/e5-large-v2" = 3
+"huggingface:nomic-ai/nomic-embed-text-v1.5" = 3
+"huggingface:mixedbread-ai/mxbai-embed-large-v1" = 3
+"huggingface:intfloat/multilingual-e5-large" = 2
+"huggingface:intfloat/multilingual-e5-small" = 2
+"huggingface:thenlper/gte-base" = 2
+"huggingface:Alibaba-NLP/gte-large-en-v1.5" = 2
+"huggingface:Qwen/Qwen3-Embedding-0.6B" = 2
+"huggingface:google/embeddinggemma-300m" = 2
+"huggingface:sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2" = 2
+"huggingface:sentence-transformers/paraphrase-multilingual-mpnet-base-v2" = 2
+"huggingface:sentence-transformers/multi-qa-MiniLM-L6-cos-v1" = 2
+"huggingface:jinaai/jina-embeddings-v5-text-small" = 2 # non-commercial license, runs repository code
+"kaggle:qwen-lm/qwen-3-embedding" = 2
+"kaggle:google/universal-sentence-encoder" = 2 # older, still the usual TensorFlow choice
+"kaggle:google/sentence-t5" = 2
+"kaggle:google/embeddinggemma" = 2
+"kaggle:google/labse" = 2
+"huggingface:jinaai/jina-embeddings-v5-text-small-retrieval-GGUF" = 1 # a conversion
+"huggingface:jinaai/jina-embeddings-v5-text-nano-retrieval-GGUF" = 1
+"huggingface:flax-sentence-embeddings/all_datasets_v3_MiniLM-L12" = 1 # superseded by all-MiniLM-L12-v2
+"huggingface:flax-sentence-embeddings/all_datasets_v3_MiniLM-L6" = 1
+"kaggle:keras/sentence-transformers" = 1
+"kaggle:shree0910/minilm-sentence-transformer" = 1
+"huggingface:flax-sentence-embeddings/st-codesearch-distilroberta-base" = 0 # code search
+"kaggle:google/wiki-words" = 0 # word vectors
+
+[[tasks]]
+id = "german-ner-model"
+need = "model"
+task = "Extract named entities from German text"
+queries = ["german ner", "named entity recognition german", "token classification"]
+must_have = ["named entity recognition", "german"]
+constraints = { languages = ["de"] }
+
+[tasks.judgments]
+"huggingface:flair/ner-german-large" = 3
+"huggingface:flair/ner-german" = 3
+"huggingface:FacebookAI/xlm-roberta-large-finetuned-conll03-german" = 3
+"huggingface:Babelscape/wikineural-multilingual-ner" = 2
+"huggingface:Davlan/bert-base-multilingual-cased-ner-hrl" = 2
+"huggingface:Davlan/distilbert-base-multilingual-cased-ner-hrl" = 2
+"huggingface:philschmid/gbert-base-germaner" = 2
+"huggingface:fhswf/bert_de_ner" = 2
+"huggingface:mschiesser/ner-bert-german" = 2
+"huggingface:flair/ner-german-legal" = 1 # legal texts only
+"huggingface:HuggingLil/pii-sensitive-ner-german" = 1 # personal-data entities only
+"huggingface:HUMADEX/german_medical_ner" = 1 # medical entities only
+"huggingface:abhilash1910/albert-german-ner" = 1
+"huggingface:lunesco/bert-german-ner" = 1
+"huggingface:schlenker/parl-german-ner-bt" = 1
+"kaggle:prachuryyakaushik/multiconer2-german-xlm" = 1
+"huggingface:oliverguhr/fullstop-punctuation-multilang-large" = 0 # punctuation, not entities
+"huggingface:segment-any-text/sat-3l-sm" = 0 # sentence segmentation
+"huggingface:segment-any-text/sat-12l-sm" = 0
+"huggingface:iiiorg/piiranha-v1-detect-personal-information" = 0
+
+# --- datasets -------------------------------------------------------------------------------------
+
+[[tasks]]
+id = "german-ner-dataset"
+need = "dataset"
+task = "Find a German NER dataset to fine-tune a token classifier"
+queries = ["german ner", "germeval", "token classification"]
+must_have = ["named entity recognition", "german"]
+constraints = { languages = ["de"] }
+
+[tasks.judgments]
+"huggingface:GermanEval/germeval_14" = 3 # the standard German NER benchmark
+"huggingface:unimelb-nlp/wikiann" = 2 # multilingual, has a German config
+"huggingface:Babelscape/multinerd" = 2
+"huggingface:MultiCoNER/multiconer_v2" = 2
+"huggingface:stefan-it/germeval14_no_wikipedia" = 2
+"kaggle:cryptexcode/multiconer-2" = 2
+"huggingface:google/xtreme" = 1 # a benchmark suite; NER is one part
+"huggingface:HUMADEX/german_ner_dataset" = 1 # medical symptoms only
+"huggingface:Hodfa71/NER-German" = 1 # 2,000 distilled examples; the Hub cannot load it
+"kaggle:thedevastator/multilingual-ner-dataset" = 1
+"kaggle:rajnathpatel/multilingual-wikipedia-ner" = 1
+"kaggle:constantinwerner/multilingual-ner-dataset" = 1
+"huggingface:ndurner/german-ner" = 0 # under 1,000 rows, no license
+"huggingface:uhhlt/GermEval2017" = 0 # sentiment, not entities
+"huggingface:universal-dependencies/universal_dependencies" = 0 # syntax, not entities
+"huggingface:ai4privacy/pii-masking-200k" = 0
+"huggingface:ai4privacy/pii-masking-300k" = 0
+"kaggle:hgultekin/paralel-translation-corpus-in-22-languages" = 0
+"kaggle:kaballa/cryptoner-ml-model" = 0
+"kaggle:yona1212/unit-conversion" = 0
+
+[[tasks]]
+id = "movie-review-sentiment-dataset"
+need = "dataset"
+task = "Find a labeled English movie review dataset for sentiment classification"
+queries = ["imdb", "movie reviews sentiment", "text classification"]
+must_have = ["movie reviews", "sentiment"]
+constraints = { languages = ["en"] }
+
+[tasks.judgments]
+"huggingface:stanfordnlp/imdb" = 3
+"huggingface:stanfordnlp/sst2" = 3
+"huggingface:cornell-movie-review-data/rotten_tomatoes" = 3
+"kaggle:lakshmi25npathi/imdb-dataset-of-50k-movie-reviews" = 3
+"huggingface:mteb/imdb" = 2 # a copy of IMDB
+"kaggle:atulanandjha/stanford-sentiment-treebank-v2-sst2" = 2
+"kaggle:vishakhdapat/imdb-movie-reviews" = 2
+"huggingface:shawhin/imdb-truncated" = 1 # a 1,000-row teaching subset
+"kaggle:madhavkumarchoudhary/sentiment-prediction-on-movie-reviews" = 1
+"huggingface:AvinabhDutta-Dev/assamese-movie-reviews-sentiment" = 0 # Assamese
+"huggingface:mirfan899/imdb_urdu_reviews" = 0 # Urdu
+"huggingface:w11wo/imdb-javanese" = 0 # Javanese
+"kaggle:harshitshankhdhar/imdb-dataset-of-top-1000-movies-and-tv-shows" = 0 # film metadata, no reviews
+"kaggle:ashirwadsangwan/imdb-dataset" = 0
+"kaggle:ashpalsingh1525/imdb-movies-dataset" = 0
+
+[[tasks]]
+id = "question-answering-dataset"
+need = "dataset"
+task = "Find an extractive question answering dataset in English"
+queries = ["squad", "reading comprehension", "question answering"]
+must_have = ["question answering"]
+constraints = { languages = ["en"] }
+
+[tasks.judgments]
+"huggingface:rajpurkar/squad" = 3
+"huggingface:rajpurkar/squad_v2" = 3
+"huggingface:google-research-datasets/natural_questions" = 3
+"kaggle:stanfordu/stanford-question-answering-dataset" = 3
+"huggingface:mrqa-workshop/mrqa" = 2
+"huggingface:hotpotqa/hotpot_qa" = 2 # multi-hop
+"kaggle:buildformacarov/squad-20" = 2 # a re-upload of SQuAD 2.0
+"kaggle:akashdesarda/squad-v11" = 2
+"huggingface:ludwigschmidt/squadshifts" = 1 # test sets only; needs a loading script
+"kaggle:thedevastator/sciq-a-dataset-for-science-question-answering" = 1 # multiple choice
+"kaggle:thedevastator/harness-the-challenges-of-qa4mre-in-your-researc" = 1
+"huggingface:iapp/iapp_wiki_qa_squad" = 0 # Thai
+"huggingface:AswiN037/tamil-question-answering-dataset" = 0 # Tamil
+"kaggle:nbroad/xlm-roberta-squad2" = 0 # a model checkpoint, not a dataset
+"kaggle:bhavikardeshna/visual-question-answering-computer-vision-nlp" = 0
+
+[[tasks]]
+id = "customer-churn-dataset"
+need = "dataset"
+task = "Find customer churn data to train a churn classifier"
+queries = ["customer churn", "telco churn", "tabular classification"]
+must_have = ["customer churn"]
+
+[tasks.judgments]
+"kaggle:blastchar/telco-customer-churn" = 3 # the one everyone uses
+"kaggle:alfathterry/telco-customer-churn-11-1-3" = 2 # the newer, wider IBM version
+"huggingface:aai510-group1/telco-customer-churn" = 2 # the same, with train/validation/test splits
+"kaggle:barun2104/telecom-churn" = 2
+"kaggle:radheshyamkollipara/bank-customer-churn" = 2
+"kaggle:gauravtopre/bank-customer-churn-dataset" = 2
+"kaggle:muhammadshahidazeem/customer-churn-dataset" = 2
+"kaggle:shrutimechlearn/churn-modelling" = 2
+"huggingface:d0r1h/customer_churn" = 1
+"huggingface:mnemoraorg/telco-churn-7k" = 1 # a re-upload
+"huggingface:spmml/telco-customer-churn2" = 1
+"kaggle:dhrubangtalukdar/telco-customer-churn-data" = 1
+"kaggle:abdallahwagih/telco-customer-churn" = 1
+"kaggle:rashadrmammadov/customer-churn-dataset" = 1
+"kaggle:anandshaw2001/customer-churn-dataset" = 1
+"kaggle:abbas829/telco-customer-churn-dataset" = 1
+"huggingface:kalhosni/CustomerChurnTelecom" = 0 # the Hub cannot load it
+"huggingface:krisnadwipaj/customer-churn" = 0
+
+# --- code (needs a GitHub token; skipped without one) -----------------------------------------------
+
+[[tasks]]
+id = "python-http-client"
+need = "code"
+task = "Choose an HTTP client library for a Python service"
+queries = ["python http client", "http requests python", "async http client python"]
+must_have = ["http client"]
+constraints = { programming_language = "python" }
+
+[tasks.judgments]
+"github:psf/requests" = 3
+"github:encode/httpx" = 3
+"github:aio-libs/aiohttp" = 3
+"github:urllib3/urllib3" = 2
+"github:encode/httpcore" = 1 # the transport under httpx, not what an application calls
+
+[[tasks]]
+id = "python-data-validation"
+need = "code"
+task = "Validate and parse incoming JSON payloads in a Python service"
+queries = ["python data validation", "schema validation python", "json schema python"]
+must_have = ["data validation"]
+constraints = { programming_language = "python" }
+
+[tasks.judgments]
+"github:pydantic/pydantic" = 3
+"github:marshmallow-code/marshmallow" = 2
+"github:python-jsonschema/jsonschema" = 2
+"github:jcrist/msgspec" = 2
+"github:python-attrs/attrs" = 1 # classes; validation is a side feature
+"github:keleshev/schema" = 1

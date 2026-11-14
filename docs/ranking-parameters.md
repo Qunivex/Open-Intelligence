@@ -1,9 +1,11 @@
 # Ranking parameters: research notes
 
-Status: **a first version of the pipeline in section 9 is built** (`src/open_intelligence/ranking/`, tool
-`find_top_picks`). It follows the decisions recorded in section 11. Its weights and thresholds are a first
-hypothesis: the evaluation in section 10 that would calibrate them is **not built yet**. Section 13 lists
-what the first version does, what it leaves out, and what running it against the live servers showed.
+Status: **the pipeline in section 9 and the evaluation in section 10 are built**
+(`src/open_intelligence/ranking/`, `src/open_intelligence/evaluation/`, tool `find_top_picks`). It follows
+the decisions recorded in section 11. The first evaluation, on a small seed set, shows the ranking only
+slightly ahead of the platforms' own order and losing on most tasks: see [evaluation.md](evaluation.md).
+The weights and thresholds are still a hypothesis. Section 13 lists what is built, what is left out, and
+what running it against the live servers showed.
 
 This document collects the parameters behind picking the top 3 open-source projects, models and datasets
 for a use case, and how to test whether a ranking is any good.
@@ -197,8 +199,11 @@ Built as described: see section 13. The weights can be changed under `[ranking]`
 
 ## 10. How to tell whether a ranking is good
 
-Not built yet. Every result already carries `platform_top` (what the platform's own order put first), which
-is the baseline this evaluation needs.
+Built, except for the last item: `open-intelligence eval` runs a golden set, scores nDCG@3 and precision@3
+for the ranking and for each platform's own order, and re-runs with each score part removed. The golden
+set that ships is a seed written by the assistant, not by practitioners. How it works, how to run it and
+the first results are in [evaluation.md](evaluation.md). Recording outcomes after a pick is used is not
+built.
 
 - **A golden set.** 30 to 50 real tasks per type (repository, model, dataset), each with picks that
   practitioners judged acceptable, good or best.
@@ -255,12 +260,16 @@ gates and scores, `engine.py` runs the pipeline). Tool: `find_top_picks`. Comman
 **Candidates.** Up to three phrasings per need. For the first phrasing each source is asked twice: in its
 default order and in one popularity order (GitHub stars, Hugging Face downloads, Kaggle notebook count), so
 popular work is considered without being ranked by popularity. Results are merged and de-duplicated.
+On Hugging Face, a phrasing that is the name of a Hub task ("sentence similarity", "token classification")
+browses that task's most-downloaded entries instead of searching names, filtered by the language
+constraint when there is one: the standard models for a task rarely have the task in their name.
 
 **Gates** (a failed gate removes the candidate; `rejected` in the result says which and why):
 
 | gate | removes | needs |
 | --- | --- | --- |
 | archived | archived or disabled repositories | search metadata |
+| security | repositories whose current release has a known vulnerability rated critical (CVSS 9 or more) | deps.dev |
 | license | non-commercial licenses when `commercial_use` is true; GPL-style when `copyleft_ok` is false | search metadata |
 | age | anything older than `max_age_months` | search metadata |
 | weights | models whose only weights are pickle files, unless `allow_pickle_weights` | the file list |
@@ -272,11 +281,40 @@ popular work is considered without being ranked by popularity. Results are merge
 
 | part | weight | repositories | models | datasets |
 | --- | --- | --- | --- | --- |
-| fit | 40% | words of the must-haves (or of the best-matching phrasing) found in name, description, topics, README; programming language | same, in name, tags, task, card; ML library; natural language | same; natural language |
-| quality | 20% | README length, install and usage instructions, releases, signs of tests or CI | eval results in the card (verified, self-reported, prose only, none); card sections | card sections and metadata (Hugging Face); usability rating and description (Kaggle) |
+| fit | 40% | words of the must-haves (or of the best-matching phrasing) found in name, description, topics, README; programming language | same, in name, tags, task, card; ML library; natural language | same, plus column names and label classes; natural language |
+| quality | 20% | README length, install and usage instructions, releases, signs of tests or CI | eval results in the card (verified, self-reported, prose only, none), and how its numbers compare with other candidates on the same benchmark; card sections | card sections and metadata; structure and sample rows (Hugging Face); usability rating, description, file types and column count (Kaggle) |
 | health | 15% | time since last push and since last release (half-life 18 months) | time since last update (30 months) | time since last update (60 months) |
-| trust | 15% | license kind; fork or original | license kind; original or conversion; safetensors / GGUF / ONNX weights; custom code | license kind |
+| trust | 15% | license kind; fork or original; OpenSSF Scorecard; known vulnerabilities in the current release | license kind; original or conversion; safetensors / GGUF / ONNX weights; custom code | license kind |
 | adoption | 10% | stars, forks | downloads in 30 days, likes (Hugging Face); votes (Kaggle) | downloads, likes (Hugging Face); notebooks, downloads, votes (Kaggle) |
+
+A candidate that matches only the name of the task category, and none of the specific search phrasings,
+keeps 75% of its fit: everything filed under "question answering" contains those words.
+
+**Security evidence for repositories.** Two public services, neither of which is an MCP server (neither
+project offers one); only a candidate's repository and package name are sent, and both can be switched off
+under `[evidence]`:
+
+- *OpenSSF Scorecard* (`api.scorecard.dev`): the overall score (0 to 10) and its checks. A score of 0 on
+  Maintained or Dangerous-Workflow, or a low Vulnerabilities check, becomes a warning.
+- *deps.dev* (`api.deps.dev`): the package the repository publishes, its current version, and the known
+  vulnerabilities that affect that version, each with its CVSS score. Critical ones are a gate, others a
+  warning. The package is the one named like the repository in the registry for its language, accepted
+  only if it names the repository as its source. When no package can be matched (`pytorch/pytorch`
+  publishes `torch`), the pick says vulnerabilities were not checked.
+
+**Benchmark comparison for models.** Eval results in model cards are grouped by benchmark: the same
+dataset, config, split and metric. Where two or more candidates report the same benchmark, the best gains
+quality and the worst loses it, and the result lists the numbers side by side (`benchmark_comparison`).
+Accuracy on a training split is never compared with accuracy on a validation split. The numbers are mostly
+self-reported.
+
+**Dataset checks.** From Hugging Face's dataset viewer: splits and row counts, whether there is a test or
+validation split, column names, label classes, and for the leading four datasets the first 30 rows, in
+which empty cells and repeated rows are counted. Two findings are warnings in their own right: a dataset
+that loads through a Python script in its repository (the viewer cannot read it, and current versions of
+the `datasets` library do not run such scripts), and a dataset whose rows the Hub cannot load. A rate limit
+or outage of the viewer is reported as "not checked", never as a defect. Kaggle's server offers file types
+and column counts only.
 
 **Top 3.** Best score first. A conversion or adapter of a model, a fork, or a same-named re-upload is not a
 separate option: it is listed under the pick it duplicates (`also_available_as`). Two fine-tunes of one base
@@ -290,18 +328,22 @@ had it.
 
 - **GitHub is not verified against the live server.** That needs a token. Its parser follows the result
   types in GitHub's documentation and is tested against hand-written fixtures only.
-- **Repositories:** no OpenSSF Scorecard, security advisories, dependents or package downloads (they need
-  sources other than the three MCP servers, or a package name). Issue response times and contributor
-  counts are not read. Tests and CI are inferred from the README.
-- **Models:** eval values are shown but not compared between models. No benchmark-contamination check, no
-  "superseded by a newer version" check. Kaggle does not report weight formats.
-- **Datasets:** nothing about label quality, duplicates, personal data or schema match. Croissant metadata
-  is not read.
+  The security lookups were run live on well-known repositories, but never through a full ranking.
+- **Repositories:** no dependents or package downloads. Issue response times and contributor counts are
+  not read. Tests and CI are inferred from the README. Vulnerabilities are checked for the current release
+  of one package; repositories that publish under another name, or several packages, are not covered.
+- **Models:** benchmark numbers are compared only where candidates happen to report the identical
+  benchmark, including ones irrelevant to the request (a Hindi test set for an English task). No task
+  leaderboards, no benchmark-contamination check, no "superseded by a newer version" check. Kaggle does not
+  report weight formats.
+- **Datasets:** sample checks look at the first 30 rows of one split, so they can show a problem but not
+  rule one out. Nothing about label noise, class balance (many datasets are sorted by label), leakage
+  between splits or personal data. Croissant metadata is not read. Kaggle offers no rows to check.
 - **Notebooks:** searched and listed by votes only, with field names assumed from Kaggle's API; this path
   needs a Kaggle token and has not been run live.
-- **Candidate generation:** platform filters and expansion (a base model's fine-tunes, a library's
-  dependents) are not used. Duplicates across platforms are caught by name only.
-- **Evaluation** (section 10): no golden set, no metrics. The weights are unproven.
+- **Candidate generation:** expansion (a base model's fine-tunes, a library's dependents) is not used.
+  Duplicates across platforms are caught by name only, so re-uploads of a dataset compete with the original.
+- **Evaluation:** the golden set is a seed, and recording outcomes after a pick is used is not built.
 
 ### What the live runs showed (2026-11-13)
 
@@ -323,3 +365,25 @@ had it.
   "english" for a product-review task. Must-haves have to name the domain ("product reviews") to exclude it.
 - **Hugging Face answers in Markdown written for a model to read.** The parsers for it are the part most
   likely to break; `pytest -m live` checks them against the real server.
+
+### What the live runs showed (2026-11-14, after adding the evidence above)
+
+- **The dataset checks find real problems.** `GermanEval/germeval_14`, the standard German NER benchmark,
+  loads through a Python script that the Hub's viewer and current `datasets` versions refuse to run. It is
+  still the right dataset; the pick now says how it loads. `Hodfa71/NER-German` declares split sizes that
+  do not match its files, and three of the six "customer churn" datasets Hugging Face returns first cannot
+  be loaded by the Hub at all.
+- **The Hub's dataset viewer rate-limits anonymous use.** Repeated runs got "429 Too Many Requests",
+  "502 Bad Gateway" and timeouts. These are reported as "not checked" and never counted against a dataset.
+  A Hugging Face token raises the limit.
+- **Benchmark comparison works where cards agree on a benchmark, which is not often.** For English speech
+  recognition it lined up word error rate on LibriSpeech test-clean for three models (3.4, 5.0, 12.3). It
+  also rewarded the small Whisper models over `whisper-large-v3`, whose card declares no results.
+- **Matching a repository to its package needs care.** deps.dev lists every package whose metadata claims a
+  repository, including look-alikes, and cuts the list off for large repositories before the real package
+  appears. Trying the package named like the repository, and accepting it only if it points back, got
+  `flask`, `requests`, `transformers`, `scikit-learn`, `express`, `lodash`, `gin` and `ripgrep` right, and
+  correctly declined `pytorch/pytorch` (which publishes `torch`).
+- **The evaluation changed the ranking twice and showed where it still loses**: re-uploads beating the
+  original dataset, the pickle-only gate removing the standard German NER models, and freshness and
+  card-declared evals carrying weight they do not earn. See [evaluation.md](evaluation.md).

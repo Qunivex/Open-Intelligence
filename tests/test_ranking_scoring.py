@@ -6,10 +6,19 @@ from typing import Any
 import pytest
 
 from open_intelligence.config import RankingSettings
-from open_intelligence.ranking.models import Candidate, Constraints, EvalResult
+from open_intelligence.ranking.models import (
+    Advisory,
+    Candidate,
+    Constraints,
+    DatasetStructure,
+    EvalResult,
+    SecurityEvidence,
+)
 from open_intelligence.ranking.scoring import (
     NEUTRAL,
     Scored,
+    benchmark_standings,
+    benchmark_tables,
     inflation,
     pick_diverse,
     score_group,
@@ -277,3 +286,225 @@ def test_top_picks_fold_duplicates_into_variants() -> None:
     picks = pick_diverse(ranked, 3)
     assert [p.candidate.id for p in picks] == ["lab/model-a", "lab/model-b", "lab/model-c"]
     assert picks[0].variants == ["someone/model-a-onnx"]
+
+
+# --- benchmark comparison -------------------------------------------------------------------------
+
+
+def evals(*results: tuple[str, str, str, float]) -> list[EvalResult]:
+    return [EvalResult(dataset=d, metric=m, value=v, split=s) for d, s, m, v in results]
+
+
+def test_models_are_compared_only_on_the_same_benchmark() -> None:
+    card = "## How to use\n" + "word " * 200
+    small = make(id="a/small", enriched=True, doc_text=card, evals=evals(("librispeech", "test", "wer", 3.4)))
+    base = make(id="a/base", enriched=True, doc_text=card, evals=evals(("librispeech", "test", "wer", 5.0)))
+    large = make(
+        id="a/large", enriched=True, doc_text=card, evals=evals(("librispeech", "test", "wer", 12.3))
+    )
+    # Same dataset and metric, but measured on the training split: not comparable, so not ranked.
+    train = make(
+        id="a/train", enriched=True, doc_text=card, evals=evals(("librispeech", "train", "wer", 0.1))
+    )
+    alone = make(id="a/alone", enriched=True, doc_text=card, evals=evals(("other-set", "test", "wer", 1.0)))
+
+    standings = benchmark_standings([small, base, large, train, alone])
+    assert set(standings) == {small.key, base.key, large.key}
+    assert [standings[c.key][0].rank for c in (small, base, large)] == [1, 2, 3]  # lower WER is better
+    assert standings[small.key][0].describe() == (
+        "wer on librispeech test: 3.4, best of the 3 candidates that report it"
+    )
+
+    quality = {k: v.parts["quality"].value for k, v in score([small, base, large, train, alone]).items()}
+    assert quality["a/small"] > quality["a/base"] > quality["a/large"]
+    assert quality["a/train"] == quality["a/alone"] == quality["a/base"]  # no comparison: unchanged
+    assert any("best of the 3" in r for r in score([small, base, large])["a/small"].parts["quality"].reasons)
+
+
+def test_benchmark_tables_put_ratios_and_percentages_on_one_scale() -> None:
+    ratio = make(id="a/ratio", evals=evals(("sst2", "validation", "accuracy", 0.91)))
+    percent = make(id="a/percent", evals=evals(("sst2", "validation", "accuracy", 93.0)))
+    (table,) = benchmark_tables([ratio, percent])
+    assert table["benchmark"] == "accuracy on sst2 validation"
+    assert table["better"] == "higher"
+    assert [r["id"] for r in table["results"]] == ["a/percent", "a/ratio"]  # 93% beats 0.91
+    assert benchmark_tables([ratio]) == []
+
+
+# --- dataset structure ----------------------------------------------------------------------------
+
+
+def dataset(id: str, structure: DatasetStructure | None = None, **fields: Any) -> Candidate:
+    return make(
+        need="dataset", id=id, enriched=True, doc_text="A dataset. " * 40, structure=structure, **fields
+    )
+
+
+def test_dataset_structure_checks_feed_quality() -> None:
+    solid = dataset(
+        "a/solid",
+        DatasetStructure(
+            splits={"default/train": 25_000.0, "default/test": 25_000.0},
+            total_rows=50_000.0,
+            columns=["text", "label"],
+            label_names=["neg", "pos"],
+            sample_rows=30,
+            sample_empty_cells=0,
+            sample_duplicate_rows=0,
+        ),
+    )
+    single = dataset("a/single", DatasetStructure(splits={"default/train": 37_000.0}, total_rows=37_000.0))
+    repeated = dataset(
+        "a/repeated",
+        DatasetStructure(
+            splits={"default/train": 900.0}, total_rows=900.0, sample_rows=30, sample_duplicate_rows=7
+        ),
+    )
+    scored = score([solid, single, repeated])
+    quality = {k: v.parts["quality"].value for k, v in scored.items()}
+    assert quality["a/solid"] > quality["a/single"] > quality["a/repeated"]
+    reasons = scored["a/solid"].parts["quality"].reasons
+    assert "splits: train 25.0K, test 25.0K" in reasons
+    assert "label classes are named (neg, pos)" in reasons
+    assert "no empty cells or repeated rows in the first 30 rows" in reasons
+    assert (
+        "no test or validation split: hold some data out yourself"
+        in scored["a/single"].parts["quality"].reasons
+    )
+    assert "7 repeated rows among the first 30" in scored["a/repeated"].warnings
+
+
+def test_dataset_that_cannot_be_loaded_is_flagged_and_a_busy_viewer_is_not_held_against_it() -> None:
+    script = dataset("a/script", flags={"loading_script"})
+    broken = dataset("a/broken", DatasetStructure(splits={"default/train": None}), flags={"viewer_failed"})
+    busy = dataset("a/busy", flags={"viewer_unavailable"})
+    plain = dataset("a/plain")
+    scored = score([script, broken, busy, plain])
+    assert any("Python script" in w for w in scored["a/script"].warnings)
+    assert any("cannot load its rows" in w for w in scored["a/broken"].warnings)
+    # A rate limit says nothing about the dataset: same score as one never looked at, with a note.
+    assert scored["a/busy"].parts["quality"].value == scored["a/plain"].parts["quality"].value
+    assert scored["a/busy"].warnings == []
+    assert any("did not answer" in note for note in scored["a/busy"].unresolved)
+    assert scored["a/script"].parts["quality"].value < scored["a/plain"].parts["quality"].value
+
+
+def test_dataset_columns_count_towards_fit() -> None:
+    plain = dataset("a/plain")
+    with_columns = dataset("a/columns", DatasetStructure(columns=["tokens", "ner_tags"]))
+    scored = score([plain, with_columns], phrases=["ner tags"])
+    assert scored["a/columns"].parts["fit"].value == pytest.approx(1.0)
+    assert scored["a/plain"].parts["fit"].value == pytest.approx(0.0)
+
+
+def test_kaggle_dataset_structure() -> None:
+    files = make(
+        need="dataset",
+        source="kaggle",
+        id="k/files",
+        structure=DatasetStructure(file_types=[".csv"], column_count=21),
+    )
+    s = score([files])["k/files"]
+    assert "21 columns in .csv files" in s.parts["quality"].reasons
+    assert any("not available from Kaggle" in note for note in s.unresolved)
+
+
+# --- security -------------------------------------------------------------------------------------
+
+
+def repo(id: str, security: SecurityEvidence | None, **fields: Any) -> Candidate:
+    return make(
+        need="code", source="github", id=id, license="MIT", license_reported=True, security=security, **fields
+    )
+
+
+def test_scorecard_and_advisories_feed_trust() -> None:
+    clean = repo(
+        "a/clean",
+        SecurityEvidence(
+            scorecard=8.4,
+            scorecard_date="2026-10-26",
+            scorecard_checks={"Maintained": 10},
+            package="pypi:clean",
+            package_version="2.0.0",
+            advisories=[],
+        ),
+    )
+    exposed = repo(
+        "a/exposed",
+        SecurityEvidence(
+            scorecard=3.0,
+            scorecard_checks={"Maintained": 0, "Dangerous-Workflow": 0},
+            package="pypi:exposed",
+            package_version="1.2.0",
+            advisories=[Advisory("GHSA-aaaa", "Session cookie disclosure", 7.5)],
+        ),
+    )
+    unknown = repo("a/unknown", SecurityEvidence(notes=["not covered by OpenSSF Scorecard"]))
+    not_looked_up = repo("a/skipped", None)
+    scored = score([clean, exposed, unknown, not_looked_up])
+    trust = {k: v.parts["trust"].value for k, v in scored.items()}
+    assert trust["a/clean"] > trust["a/unknown"] == trust["a/skipped"] > trust["a/exposed"]
+
+    assert "OpenSSF Scorecard 8.4/10, scanned 2026-10-26" in scored["a/clean"].parts["trust"].reasons
+    assert "no known vulnerabilities affect pypi:clean 2.0.0" in scored["a/clean"].parts["trust"].reasons
+    warnings = scored["a/exposed"].warnings
+    assert "1 known vulnerabilities affect pypi:exposed 1.2.0: GHSA-aaaa (high)" in warnings
+    assert "Scorecard: no maintenance activity in the last 90 days" in warnings
+    assert "Scorecard: a dangerous pattern in its CI workflows" in warnings
+    assert scored["a/exposed"].gate_failures == []  # high is a warning; critical is a gate
+    assert "not covered by OpenSSF Scorecard" in scored["a/unknown"].unresolved
+    assert any("were not looked up" in note for note in scored["a/skipped"].unresolved)
+
+
+def test_a_critical_vulnerability_in_the_current_release_is_a_gate() -> None:
+    critical = repo(
+        "a/critical",
+        SecurityEvidence(
+            scorecard=9.0,
+            package="npm:x",
+            package_version="1.0.0",
+            advisories=[Advisory("GHSA-crit", "RCE", 9.8)],
+        ),
+    )
+    assert gates(critical) == ["security"]
+    assert score([critical])["a/critical"].gate_failures[0][1].endswith("GHSA-crit")
+
+
+# --- generic category matches ---------------------------------------------------------------------
+
+
+def test_matching_only_the_task_category_is_a_weaker_fit_than_matching_a_specific_phrasing() -> None:
+    squad = make(
+        need="dataset",
+        id="a/squad",
+        description="reading comprehension",
+        tags=["task_categories:question-answering"],
+    )
+    quiz = make(
+        need="dataset",
+        id="a/quiz",
+        description="multiple choice exam",
+        tags=["task_categories:question-answering"],
+    )
+    specifics = [
+        "squad",
+        "reading comprehension",
+    ]  # "question answering" is the category name, not one of these
+
+    def fits(phrases: list[str], must_have: bool, specific: list[str] | None) -> dict[str, float | None]:
+        scored = score_group([squad, quiz], phrases, must_have, Constraints(), SETTINGS, NOW, True, specific)
+        return {s.candidate.id: s.parts["fit"].value for s in scored}
+
+    # As a must-have, and as a plain phrasing: the category alone keeps three quarters of the fit.
+    assert fits(["question answering"], True, specifics) == pytest.approx({"a/squad": 1.0, "a/quiz": 0.75})
+    assert fits(["squad", "reading comprehension", "question answering"], False, specifics) == pytest.approx(
+        {"a/squad": 1.0, "a/quiz": 0.75}
+    )
+    # With nothing specific to compare against, nothing changes.
+    assert fits(["question answering"], True, None) == pytest.approx({"a/squad": 1.0, "a/quiz": 1.0})
+    scored = score_group([quiz], ["question answering"], True, Constraints(), SETTINGS, NOW, True, specifics)
+    assert (
+        "matches the task category, but none of the specific search phrasings"
+        in scored[0].parts["fit"].reasons
+    )

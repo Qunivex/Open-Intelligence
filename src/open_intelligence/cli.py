@@ -5,6 +5,7 @@ open-intelligence route "<task>"            # offline: which sources, and why
 open-intelligence sources [--check]         # config and auth state; --check connects
 open-intelligence search "<task>" -q "..."  # route + live search, raw results
 open-intelligence picks "<task>" -q "..."   # route, search, gate, score: the top 3 per need
+open-intelligence eval                      # score the ranking against a golden set and the platforms' order
 open-intelligence skill-path                # where the routing skill (SKILL.md) is installed
 """
 
@@ -72,6 +73,19 @@ def main(argv: list[str] | None = None) -> int:
     p_picks.add_argument("--constraints", default="{}", help='JSON object, e.g. {"commercial_use": true}')
     p_picks.add_argument("--top", type=int, default=3)
 
+    p_eval = sub.add_parser("eval", help="score the ranking against a golden set (live unless --replay)")
+    p_eval.add_argument(
+        "--golden", help="golden set TOML file (default: the seed set shipped with the package)"
+    )
+    p_eval.add_argument("--record", help="save every upstream answer to this file (.json or .json.gz)")
+    p_eval.add_argument("--replay", help="answer from a saved recording instead of the network")
+    p_eval.add_argument(
+        "--no-ablations", action="store_true", help="skip the runs with each score part removed"
+    )
+    p_eval.add_argument(
+        "--json", action="store_true", help="print the full report as JSON instead of a table"
+    )
+
     sub.add_parser("skill-path", help="print the path of the bundled routing skill")
 
     args = parser.parse_args(argv)
@@ -104,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_sources(connector, args.check))
     if command == "search":
         return asyncio.run(_search(connector, args.task, args.query, args.need, args.limit))
+    if command == "eval":
+        return asyncio.run(_evaluate(connector, args))
     if command == "picks":
         from pydantic import ValidationError
 
@@ -142,4 +158,36 @@ async def _search(connector: Connector, task: str, query: str, needs: list[str] 
     decision = route(task, needs)
     results = await _run_searches(connector, decision, query, {}, max(1, min(limit, 10)))
     _print({"routing": decision.as_dict(), "results": results})
+    return 0
+
+
+async def _evaluate(connector: Connector, args: argparse.Namespace) -> int:
+    from open_intelligence.evaluation import Recorder, evaluate, load_golden, render_markdown
+    from open_intelligence.evaluation.golden import GoldenError
+
+    try:
+        golden = load_golden(args.golden)
+    except GoldenError as exc:
+        print(f"golden set error: {exc}", file=sys.stderr)
+        return 2
+    if args.replay:
+        try:
+            recorder = Recorder.load(args.replay, connector)
+        except (OSError, ValueError) as exc:
+            print(f"cannot read the recording: {exc}", file=sys.stderr)
+            return 2
+    else:
+        recorder = Recorder(connector)
+    report = await evaluate(
+        golden, recorder, now=recorder.now, security=recorder.security(), ablations=not args.no_ablations
+    )
+    if args.record:
+        recorder.save(args.record)
+    if args.json:
+        _print(report.as_dict())
+    else:
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+        print(render_markdown(report))
     return 0

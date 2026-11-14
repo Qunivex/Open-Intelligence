@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
-from open_intelligence.config import Settings
+from open_intelligence.config import EvidenceSettings, Settings
 from open_intelligence.connector import Connector, SourceError
 from open_intelligence.sources import BUILTIN_SOURCES
 
@@ -67,7 +67,10 @@ def ranked_settings() -> Settings:
         )
         for sid, spec in BUILTIN_SOURCES.items()
     }
-    return Settings(sources=sources, timeout_s=30)
+    # No network in the offline tests: the security lookups are off unless a test passes its own.
+    return Settings(
+        sources=sources, timeout_s=30, evidence=EvidenceSettings(scorecard=False, advisories=False)
+    )
 
 
 class InProcessConnector(Connector):

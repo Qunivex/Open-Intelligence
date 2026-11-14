@@ -44,7 +44,8 @@ flowchart TD
 | stage | what happens | code |
 | --- | --- | --- |
 | adapters | which upstream calls to make for a (source, need), and how to read their results into one `Candidate` shape | `ranking/adapters.py` |
-| gates | facts that disqualify: archived, license against the constraints, pickle-only weights, size, age, poor fit | `ranking/scoring.py` |
+| security evidence | OpenSSF Scorecard and known vulnerabilities for repositories, over plain HTTPS (`api.scorecard.dev`, `api.deps.dev`): the one place that does not go through an MCP server | `ranking/evidence.py` |
+| gates | facts that disqualify: archived, a critical known vulnerability, license against the constraints, pickle-only weights, size, age, poor fit | `ranking/scoring.py` |
 | scores | fit, quality, health, trust, adoption, each 0 to 1; unknown evidence is neutral and reported | `ranking/scoring.py` |
 | selection | best first; conversions, forks and re-uploads fold into the pick they duplicate | `ranking/scoring.py` |
 | pipeline | route, gather, score, read the shortlist, score again, pick, explain | `ranking/engine.py` |
@@ -53,6 +54,15 @@ Scores are computed per need: a repository is never compared with a dataset. Mod
 two sources each; they share one list because adoption is a percentile within each source and the other
 parts are on the same scale. The parameters, the decisions behind them and the limits of this first version
 are in [ranking-parameters.md](ranking-parameters.md).
+
+## Evaluation
+
+`evaluation/` answers one question: does the ranking beat each platform's own order? A golden set
+(`golden.py`, with a seed in `seed.toml`) lists tasks and graded judgments. The runner (`runner.py`) ranks
+each task, scores the top 3 with nDCG@3 and precision@3 (`metrics.py`), does the same for what each
+platform showed first, and re-runs with each score part removed. A `Recorder` stands in for the connector,
+remembers every upstream answer and can replay a saved run, so the same data can be scored by different
+code. Command: `open-intelligence eval`. Method and results: [evaluation.md](evaluation.md).
 
 ## Modules
 
@@ -63,8 +73,9 @@ are in [ranking-parameters.md](ranking-parameters.md).
 | `connector.py` | MCP client: connect (HTTP or stdio), list/call allowed tools, timeouts, clean errors, output cap |
 | `router.py` | needs -> sources, with evidence, ambiguities and confidence |
 | `ranking/` | candidates, gates, scores and the top-3 pipeline (see below) |
+| `evaluation/` | golden set, metrics, baseline, ablations, record and replay (see below) |
 | `server.py` | the MCP server: tools, instructions, the routing prompt |
-| `cli.py` | `serve`, `route`, `sources`, `search`, `picks`, `skill-path` |
+| `cli.py` | `serve`, `route`, `sources`, `search`, `picks`, `eval`, `skill-path` |
 | `skills/open-source-routing/SKILL.md` | the routing skill for agents that load skills |
 
 ## Design decisions
@@ -86,7 +97,11 @@ are in [ranking-parameters.md](ranking-parameters.md).
   score. Adoption is 10% of the score, relative to the other candidates, and damped when signals disagree.
 - **Unknown is neutral and visible.** Missing evidence neither helps nor hurts a candidate; it is listed
   on the pick as an unresolved check.
-- **The data comes through the official MCP servers only.** That keeps one integration per platform, at
-  a cost: Hugging Face's search and details tools answer in Markdown meant for a model, so those parsers
-  can drift. The live tests check them.
-- **The weights are a hypothesis.** They are configurable and unproven until the evaluation exists.
+- **The data comes through the official MCP servers, with one exception.** That keeps one integration per
+  platform, at a cost: Hugging Face's search and details tools answer in Markdown meant for a model, so
+  those parsers can drift. The live tests check them. The exception is security evidence for repositories:
+  OpenSSF Scorecard and deps.dev have no MCP server, so they are called over HTTPS, and can be switched off.
+- **A busy upstream is not a verdict.** A rate limit, gateway error or timeout from Hugging Face's dataset
+  viewer is reported as "not checked"; only an answer about the data itself counts against a dataset.
+- **The weights are a hypothesis.** They are configurable, and the first evaluation does not yet show the
+  ranking to be better than the platforms' own order.

@@ -60,9 +60,13 @@ Call `find_top_picks` with:
   more than anything else: a German NER dataset search finds the standard benchmark only when one of the
   phrasings is `germeval`. Use short keywords in each platform's vocabulary, never the user's sentence:
   - **GitHub (`code`)**: capability plus ecosystem words: `snowflake reverse etl`, `census api python`.
-  - **Hugging Face (`model`, `dataset`)**: the task as the Hub names it (`sentiment`,
-    `text-classification`, `automatic-speech-recognition`) plus domain or language words; and the names
-    practitioners use for the well-known options (`germeval`, `whisper`).
+  - **Hugging Face (`model`, `dataset`)**: domain or language words (`german ner`, `review sentiment`) and
+    the names practitioners use for the well-known options (`germeval`, `whisper`, `squad`). Make one of
+    the phrasings exactly the Hub's name for the task: `sentence similarity`, `text classification`,
+    `token classification`, `automatic speech recognition`, `question answering`. That phrasing browses
+    the task's most-downloaded entries instead of searching names, which is the only way to reach the
+    standard models whose names do not say what they do (`all-MiniLM-L6-v2`, `bge-m3`). Keep the other
+    phrasings specific: a candidate that matches only the task name is treated as a weaker fit.
   - **Kaggle (`dataset`, `notebook`)**: subject words: `telecom customer churn`, `product reviews`.
 - `must_have`: what a pick must do or contain, per need, as short phrases. Name the domain, not only the
   task: `["sentiment classification", "product reviews"]`, not just `["sentiment"]`. Fit is measured by
@@ -95,6 +99,22 @@ Present each pick with its `why`, its `warnings`, and its `unresolved_checks`: w
 part of the answer. Mention a strong `rejected` candidate when the reason is the user's to overrule (a
 license, pickle-only weights). `platform_top` shows what the platform's own order would have put first;
 use it when the user asks why a popular option is missing.
+
+What the evidence means, and its limits:
+
+- **Repositories** carry an OpenSSF Scorecard score and the known vulnerabilities of the current release
+  of the package they publish (`package_checked` names it). "None" covers that one package and version
+  only, and when no package could be matched the pick says vulnerabilities were not checked.
+- **Models** show the eval results their cards declare, mostly self-reported. `benchmark_comparison` sets
+  the numbers side by side where candidates report the same benchmark; check that the benchmark matters
+  for the user's task before quoting it.
+- **Datasets** show splits, row counts and columns, and a check of the first rows for empty cells and
+  repeats. That can reveal a problem; it cannot rule one out. "Loads through a Python script" means the
+  user needs an older `datasets` version or a converted copy.
+
+The ranking is not proven better than the platforms' own order yet (the first evaluation was close to a
+tie). When `platform_top` contains the option everyone in the field uses and the picks do not, say so and
+let the user choose.
 
 To look closer at one candidate, use `call_source_tool` (GitHub: `get_file_contents`, `list_releases`;
 Hugging Face: `hub_repo_details`; Kaggle: `get_dataset_info`, `get_model`).

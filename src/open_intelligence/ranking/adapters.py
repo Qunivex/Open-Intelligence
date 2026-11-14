@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from open_intelligence.connector import CallOutcome
-from open_intelligence.ranking.models import Call, Candidate, EvalResult
+from open_intelligence.ranking.models import Call, Candidate, DatasetStructure, EvalResult
 from open_intelligence.sources import Need
 
 DOC_CHARS = 8000  # how much README / card text is kept for matching
@@ -77,6 +77,10 @@ def _str(value: Any) -> str:
     return html.unescape(value).strip() if isinstance(value, str) else ""
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _set_metric(candidate: Candidate, name: str, value: Any) -> None:
     number = parse_number(value)
     if number is not None:
@@ -90,13 +94,17 @@ class Adapter:
     need: Need = "code"
     reads_shortlist: bool = True  # False when the search result already carries the full card
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         raise NotImplementedError
 
     def parse_search(self, outcome: CallOutcome, limit: int) -> list[Candidate]:
         raise NotImplementedError
 
     def enrich_calls(self, candidates: list[Candidate]) -> list[Call]:
+        return []
+
+    def follow_up_calls(self, candidates: list[Candidate]) -> list[Call]:
+        """Calls that can only be planned once ``enrich_calls`` have been applied."""
         return []
 
     def apply(self, candidates: dict[str, Candidate], call: Call, outcome: CallOutcome) -> None:
@@ -113,7 +121,7 @@ class GitHubCode(Adapter):
     source = "github"
     need: Need = "code"
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         calls = []
         for i, query in enumerate(queries):
             # minimal_output=false returns full repository objects (license, pushed_at).
@@ -307,35 +315,54 @@ def read_front_matter(yaml_text: str) -> dict[str, list[str]]:
     return out
 
 
-def read_model_index(yaml_text: str, limit: int = 12) -> list[EvalResult]:
-    """Eval results from a card's ``model-index`` block: dataset, metric, value, verified."""
+def read_model_index(yaml_text: str, limit: int = 24) -> list[EvalResult]:
+    """Eval results from a card's ``model-index`` block.
+
+    Each result records what it was measured on (dataset id, config, split) as well as the metric,
+    value and whether Hugging Face verified it: numbers are only comparable on the same benchmark.
+    """
     start = re.search(r"^model-index:", yaml_text, flags=re.MULTILINE)
     if not start:
         return []
     results: list[EvalResult] = []
-    mode, dataset, metric = "", "", None
+    entry: list[EvalResult] = []  # the metrics of the result entry being read
+    dataset: dict[str, str] = {}
+    mode, metric, in_sub_block = "", None, False
+
+    def close_entry() -> None:
+        for result in entry:
+            # The Hub id ("glue") identifies a benchmark across cards better than its display name.
+            result.dataset = dataset.get("type") or dataset.get("name") or "unnamed dataset"
+            result.config, result.split = dataset.get("config", ""), dataset.get("split", "")
+        entry.clear()
+        dataset.clear()
+
     for line in yaml_text[start.end() :].splitlines():
         if re.match(r"^[A-Za-z_]", line):  # next top-level key
             break
         s = line.strip()
-        bare = s[2:].strip() if s.startswith("- ") else s
+        starts_item = s.startswith("- ")
+        bare = s[2:].strip() if starts_item else s
         if bare in ("dataset:", "task:"):
+            if starts_item:
+                close_entry()  # "- task:" opens the next result
             mode = bare[:-1]
-            if bare == "task:" and s.startswith("- "):
-                dataset = ""  # a new result entry
         elif bare.startswith("metrics:"):
             mode = "metrics"
-        elif mode == "dataset" and (s.startswith("name:") or (s.startswith("type:") and not dataset)):
-            dataset = s.split(":", 1)[1].strip().strip("'\"")
+        elif mode == "dataset":
+            name, _, value = s.partition(":")
+            if name in ("name", "type", "config", "split") and value.strip():
+                dataset[name] = value.strip().strip("'\"")
         elif mode == "metrics":
-            starts_item = s.startswith("- ")
-            field = s[2:] if starts_item else s
-            name, _, value = field.partition(":")
+            name, _, value = bare.partition(":")
             name, value = name.strip(), value.strip().strip("'\"")
             if starts_item:
-                metric = EvalResult(dataset=dataset or "unnamed dataset", metric="", value=None)
+                metric, in_sub_block = EvalResult(dataset="", metric="", value=None), False
+                entry.append(metric)
                 results.append(metric)
-            if metric is None:
+            elif name in ("source", "args"):
+                in_sub_block = True  # their own name/url fields are not the metric's
+            if metric is None or in_sub_block:
                 continue
             if name == "type" and value:
                 metric.metric = value  # the metric id ("accuracy") is preferred over its display name
@@ -345,7 +372,114 @@ def read_model_index(yaml_text: str, limit: int = 12) -> list[EvalResult]:
                 metric.value = parse_number(value)
             elif name == "verified":
                 metric.verified = value.lower() == "true"
+    close_entry()
     return [r for r in results if r.metric][:limit]
+
+
+SAMPLE_ROWS = 30  # rows of a dataset looked at for empty cells and duplicates
+PREVIEW_TOP = 4  # datasets per read whose sample rows are fetched
+_EMPTY_CELLS = frozenset({"", "null", "none", "nan", "n/a", "na"})
+
+
+_VIEWER_BUSY = re.compile(
+    r"Could not fetch [^\n]*?(?:\b429\b|\b502\b|\b503\b|\b504\b|timeout|timed out|aborted)", re.IGNORECASE
+)
+
+
+def _viewer_is_busy(text: str) -> bool:
+    """The Hub's dataset viewer answered with a rate limit, gateway error or timeout, not with a verdict."""
+    return _VIEWER_BUSY.search(text) is not None
+
+
+def _table_rows(section: str) -> list[list[str]]:
+    """Cells of each data row of a Markdown table (header and separator lines dropped)."""
+    rows = []
+    for line in section.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or re.fullmatch(r"\|[\s:|-]+\|?", line):
+            continue
+        cells = [
+            cell.replace("\\_", "_").replace("\\|", "|").strip()
+            for cell in re.split(r"(?<!\\)\|", line)[1:-1]
+        ]
+        rows.append(cells)
+    return rows[1:]  # without the header row
+
+
+def _section(body: str, heading: str) -> str:
+    found = re.search(rf"^###\s+{re.escape(heading)}\n(.*?)(?=^##|\Z)", body, flags=re.MULTILINE | re.DOTALL)
+    return found.group(1) if found else ""
+
+
+def read_dataset_structure(details: str) -> DatasetStructure | None:
+    """Splits, row counts, columns and label classes from Hugging Face's ``dataset_structure`` text.
+
+    None when the dataset has no viewer (the Hub could not load its files), which is itself a fact
+    worth knowing: such a dataset cannot be previewed or loaded without custom code.
+    """
+    structure = DatasetStructure()
+    for cells in _table_rows(_section(details, "Configs and Splits")):
+        if len(cells) < 4:
+            continue
+        rows = parse_number(cells[2])
+        if rows is None:
+            rows = parse_number(cells[3])  # an estimate, when the exact count is not computed
+        structure.splits[f"{cells[0]}/{cells[1]}"] = rows
+    total = re.search(r"^Total rows:\s*([0-9.,]+[KMB]?)", details, flags=re.MULTILINE)
+    structure.total_rows = parse_number(total.group(1)) if total else None
+    if not structure.total_rows and any(rows is None for rows in structure.splits.values()):
+        structure.total_rows = None  # "Total rows: 0" next to uncounted splits means unknown, not empty
+    for cells in _table_rows(_section(details, "Schema Preview")):
+        if len(cells) < 3:
+            continue
+        structure.columns.append(cells[1])
+        feature = _json(cells[2].replace("\\", ""))
+        if isinstance(feature, dict) and feature.get("_type") == "ClassLabel":
+            structure.label_names = [str(n) for n in feature.get("names") or []][:50]
+    structure.column_count = len(structure.columns) or None
+    if not structure.splits and not structure.columns:
+        return None
+    if structure.splits:
+        first_config = next(iter(structure.splits)).rsplit("/", 1)[0]
+        in_config = [k.rsplit("/", 1)[1] for k in structure.splits if k.rsplit("/", 1)[0] == first_config]
+        structure.preview_of = (first_config, "train" if "train" in in_config else in_config[0])
+    return structure
+
+
+def read_sample_rows(structure: DatasetStructure, preview: str) -> None:
+    """Count empty cells and repeated rows in the first rows of a dataset.
+
+    This looks at the head of one split only. It can show that a problem exists; it cannot show
+    that none does, and it says nothing about class balance (many datasets are sorted by label).
+    """
+    section = _section(preview, "Rows")
+    header = next((line for line in section.splitlines() if line.strip().startswith("|")), "")
+    width = len(re.split(r"(?<!\\)\|", header.strip())) - 2
+    rows = [cells[1:] for cells in _table_rows(section) if len(cells) == width and cells[0].isdigit()]
+    if not rows:
+        return
+    structure.sample_rows = len(rows)
+    structure.sample_empty_cells = sum(cell.lower() in _EMPTY_CELLS for row in rows for cell in row)
+    structure.sample_duplicate_rows = len(rows) - len({tuple(row) for row in rows})
+
+
+# Task names the Hub files models (pipeline tags) and datasets (task categories) under.
+HUB_TASKS = frozenset(
+    "text-classification token-classification question-answering table-question-answering summarization "
+    "translation text-generation fill-mask sentence-similarity feature-extraction text-ranking "
+    "zero-shot-classification automatic-speech-recognition text-to-speech text-to-audio audio-classification "
+    "voice-activity-detection image-classification object-detection image-segmentation image-to-text "
+    "image-text-to-text text-to-image image-to-image image-feature-extraction zero-shot-image-classification "
+    "zero-shot-object-detection visual-question-answering document-question-answering depth-estimation "
+    "video-classification text-to-video tabular-classification tabular-regression time-series-forecasting "
+    "reinforcement-learning mask-generation keypoint-detection".split()
+)
+
+
+def hub_task(query: str) -> str | None:
+    """The Hub task a search phrasing names, if it names one: 'Sentence similarity' -> 'sentence-similarity'."""
+    task = re.sub(r"[\s_]+", "-", query.strip().lower())
+    return task if task in HUB_TASKS else None
 
 
 class HuggingFace(Adapter):
@@ -358,9 +492,24 @@ class HuggingFace(Adapter):
     def _url(self, repo_id: str) -> str:
         return f"https://huggingface.co/{'datasets/' if self.kind == 'dataset' else ''}{repo_id}"
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         calls = []
         for i, query in enumerate(queries):
+            task = hub_task(query)
+            if task is not None:
+                # A phrasing that names a Hub task ("sentence similarity") browses that task instead
+                # of searching names: the standard models for a task rarely have the task in their name
+                # (all-MiniLM-L6-v2, bge-m3). The most downloaded are asked for, as candidates to
+                # consider, not as a ranking. Trending was tried too and dropped: on the seed
+                # evaluation it filled the list with that week's uploads (docs/evaluation.md).
+                filters = [task if self.kind == "model" else f"task_categories:{task}"]
+                if languages:
+                    filters.append(languages[0] if self.kind == "model" else f"language:{languages[0]}")
+                browse = {"repo_types": [self.kind], "filters": filters, "limit": limit, "sort": "downloads"}
+                calls.append(
+                    Call("hub_repo_search", browse, label=f"task {task} (most downloads)", baseline=i == 0)
+                )
+                continue
             base = {"query": query, "repo_types": [self.kind], "limit": limit}
             calls.append(Call("hub_repo_search", base, label=query, baseline=i == 0))
             if i == 0:
@@ -399,11 +548,11 @@ class HuggingFace(Adapter):
         ids = [c.id for c in candidates]
         for i in range(0, len(ids), 10):  # hub_repo_details takes at most 10 repos
             chunk = ids[i : i + 10]
-            calls.append(
-                Call(
-                    "hub_repo_details", {"repo_ids": chunk, "repo_type": self.kind}, "details", targets=chunk
-                )
-            )
+            arguments: dict[str, Any] = {"repo_ids": chunk, "repo_type": self.kind}
+            if self.kind == "dataset":
+                # Splits, row counts and the column schema, from the dataset viewer.
+                arguments["operations"] = ["overview", "dataset_structure"]
+            calls.append(Call("hub_repo_details", arguments, "details", targets=chunk))
         per_call = 15 if self.kind == "model" else 30  # hf_fs takes at most 30 operations
         root = "hf://models/" if self.kind == "model" else "hf://datasets/"
         for i in range(0, len(ids), per_call):
@@ -420,10 +569,39 @@ class HuggingFace(Adapter):
             calls.append(Call("hf_fs", {"operations": operations}, "files", targets=targets))
         return calls
 
+    def follow_up_calls(self, candidates: list[Candidate]) -> list[Call]:
+        """Sample rows of each dataset whose structure is known (the preview needs a config and split)."""
+        calls = []
+        # Only the leading few: every preview is a request to the Hub's dataset viewer, which
+        # rate-limits anonymous callers.
+        for c in candidates[:PREVIEW_TOP]:
+            if self.kind != "dataset" or c.structure is None or c.structure.preview_of is None:
+                continue
+            if c.flags & {"viewer_failed", "viewer_unavailable"}:
+                continue  # the Hub already said it cannot load these rows, or is not answering
+            config, split = c.structure.preview_of
+            arguments = {
+                "repo_ids": [c.id],
+                "repo_type": "dataset",
+                "operations": ["dataset_preview"],
+                "config": config,
+                "split": split,
+                "limit": SAMPLE_ROWS,
+            }
+            calls.append(Call("hub_repo_details", arguments, "preview", targets=[c.id]))
+        return calls
+
     def apply(self, candidates: dict[str, Candidate], call: Call, outcome: CallOutcome) -> None:
         if call.label == "details":
             if outcome.ok:
                 self._apply_details(candidates, outcome.text)
+            return
+        if call.label == "preview":
+            c = candidates.get(call.targets[0])
+            if c is not None and c.structure is not None and outcome.ok:
+                read_sample_rows(c.structure, outcome.text)
+                if c.structure.sample_rows is None:
+                    c.flags.add("viewer_unavailable" if _viewer_is_busy(outcome.text) else "viewer_failed")
             return
         results = outcome.structured.get("results") if isinstance(outcome.structured, dict) else None
         if not outcome.ok or not isinstance(results, list):
@@ -488,6 +666,16 @@ class HuggingFace(Adapter):
                 summary = re.sub(r"\s+", " ", description.group(1)).strip()
                 c.description = c.description or summary[:600]
                 c.doc_text = c.doc_text or summary[:DOC_CHARS]  # until the card itself is read
+            if self.kind == "dataset":
+                c.structure = read_dataset_structure(body) or c.structure
+                if c.structure is None and "arbitrary Python code" in body:
+                    c.flags.add("loading_script")  # the Hub refuses to run it, so there is no viewer
+                elif _viewer_is_busy(body):
+                    c.flags.add("viewer_unavailable")  # a rate limit or outage: says nothing about the data
+                elif c.structure is None and "Could not fetch splits" in body:
+                    c.flags.add("no_viewer")
+                elif "Failed parquet jobs" in body or "Could not fetch rows" in body:
+                    c.flags.add("viewer_failed")  # the Hub tried to load the files and could not
 
     def _apply_card(self, c: Candidate, readme: str) -> None:
         front, body, complete = split_front_matter(readme)
@@ -581,7 +769,7 @@ class KaggleDatasets(Adapter):
     source = "kaggle"
     need: Need = "dataset"
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         calls = []
         for i, query in enumerate(queries):
             base = {"search": query, "pageSize": limit}
@@ -637,6 +825,8 @@ class KaggleDatasets(Adapter):
             owner, _, slug = c.id.partition("/")
             request = {"request": {"ownerSlug": owner, "datasetSlug": slug}}
             calls.append(Call("get_dataset_info", request, "info", targets=[c.id]))
+            # File types and column counts. Kaggle's server offers no row counts or sample rows.
+            calls.append(Call("get_dataset_files_summary", request, "files", targets=[c.id]))
         return calls
 
     def apply(self, candidates: dict[str, Candidate], call: Call, outcome: CallOutcome) -> None:
@@ -644,6 +834,21 @@ class KaggleDatasets(Adapter):
         if c is None:
             return
         data = _json(outcome.text) if outcome.ok else None
+        if call.label == "files":
+            if isinstance(data, dict):
+                files = _dict(data.get("file_summary_info"))
+                columns = _dict(data.get("column_summary_info"))
+                types = [
+                    _str(t.get("extension")).lower()
+                    for t in files.get("file_types") or []
+                    if isinstance(t, dict) and _str(t.get("extension"))
+                ]
+                count = parse_number(columns.get("total_column_count"))
+                if types or count:
+                    c.structure = DatasetStructure(
+                        file_types=types, column_count=int(count) if count else None
+                    )
+            return
         if not isinstance(data, dict):
             c.read_notes.append("dataset description could not be read")
             return
@@ -658,7 +863,7 @@ class KaggleModels(Adapter):
     need: Need = "model"
     reads_shortlist = False  # list_models already returns each model's card
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         calls = []
         for i, query in enumerate(queries):
             base = {"search": query, "pageSize": limit}
@@ -718,7 +923,7 @@ class KaggleNotebooks(Adapter):
     need: Need = "notebook"
     reads_shortlist = False
 
-    def search_calls(self, queries: list[str], limit: int) -> list[Call]:
+    def search_calls(self, queries: list[str], limit: int, languages: list[str] | None = None) -> list[Call]:
         calls = []
         for i, query in enumerate(queries):
             base = {"search": query, "pageSize": limit}

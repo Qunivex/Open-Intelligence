@@ -32,6 +32,15 @@ model = 30
 dataset = 60
 notebook = 30
 
+# Security evidence for repositories. These two are public HTTPS APIs, not MCP servers. Only the
+# repository and package names of candidates are sent to them.
+[evidence]
+scorecard = true                             # OpenSSF Scorecard
+advisories = true                            # known vulnerabilities in the current release, through deps.dev
+scorecard_url = "https://api.scorecard.dev"
+deps_dev_url = "https://api.deps.dev"
+timeout_seconds = 20
+
 [sources.github]
 enabled = true
 transport = "http"
