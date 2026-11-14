@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-intelligence"
+dynamic = ["version"]
+description = "MCP server that routes an AI agent's request to the official GitHub, Hugging Face and Kaggle MCP servers, so it can find open-source projects, models and datasets to build on."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Qunivex Labs" }]
+keywords = ["mcp", "model-context-protocol", "ai-agents", "github", "huggingface", "kaggle", "open-source"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+# Keep this list short: every dependency is supply-chain surface.
+dependencies = [
+  "mcp>=2.3,<3", # official MCP Python SDK: our server, and the client for the upstream servers
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.15", "mypy>=1.18"]
+
+[project.urls]
+Homepage = "https://github.com/Qunivex/Open-Intelligence"
+Issues = "https://github.com/Qunivex/Open-Intelligence/issues"
+
+[project.scripts]
+open-intelligence = "open_intelligence.cli:main"
+
+[tool.hatch.version]
+path = "src/open_intelligence/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_intelligence"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/open_intelligence", "tests", "docs", "README.md", "LICENSE", "open-intelligence.example.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m \"not live\""
+markers = ["live: calls the real GitHub / Hugging Face / Kaggle MCP servers (deselected by default; run with -m live)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PT"]
+ignore = [
+  "S101",   # assert is fine in tests and for internal invariants
+  "E501",   # long string literals are allowed
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S603", "PT018"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+packages = ["open_intelligence"]
+mypy_path = "src"

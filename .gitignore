@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local config may name token env vars; tokens themselves never go in files, but keep local copies out anyway.
+open-intelligence.toml
+.env
+.env.*
