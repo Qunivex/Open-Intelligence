@@ -4,7 +4,7 @@ Does the ranking put better candidates first than each platform's own order? Thi
 that is measured, and what the measurements so far show.
 
 **Short version (data of 2026-11-14, seed set, 10 tasks):** the ranking scores somewhat higher on average
-than the platforms' own order (nDCG@3 0.62 against 0.56). It wins 3 tasks, ties 2 and loses 5. That is
+than the platforms' own order (nDCG@3 0.66 against 0.56). It wins 3 tasks, ties 3 and loses 4. That is
 not yet evidence that the ranking is better. The set is small, it was graded by the assistant that built
 the ranking, and several fixes were made after seeing earlier results on these same tasks. Read the
 numbers as a list of what to fix next, not as a score.
@@ -58,7 +58,7 @@ Ten tasks: four models, four datasets, two code.
 - The grades were written by the AI assistant that built the ranking, from general knowledge of the
   fields and from what the searches returned. That is a conflict of interest.
 - Ten tasks is far too few to separate a real difference from noise.
-- Five changes to the ranking were made after seeing results on these tasks (see "How the number got
+- Six changes to the ranking were made after seeing results on these tasks (see "How the number got
   here"). A result measured on the tasks that prompted the change is optimistic.
 
 The project needs 30 to 50 tasks per type, graded by practitioners who have not seen the ranking's output.
@@ -76,10 +76,10 @@ Data as of 2026-11-14. Weights: fit 40%, quality 20%, health 15%, trust 15%, ado
 | german-ner-dataset | dataset | 0.88 | 0.16 | 0.67 | 1.00 |
 | movie-review-sentiment-dataset | dataset | 0.51 | 0.51 | 0.33 | 0.67 |
 | question-answering-dataset | dataset | 0.50 | 0.70 | 0.33 | 0.67 |
-| customer-churn-dataset | dataset | 0.62 | 1.00 | 0.67 | 1.00 |
+| customer-churn-dataset | dataset | 1.00 | 1.00 | 1.00 | 1.00 |
 | python-http-client | code | 0.73 | 0.83 | 1.00 | 1.00 |
 | python-data-validation | code | 0.67 | 0.67 | 0.33 | 0.33 |
-| **mean** | | **0.62** | **0.56** | **0.63** | |
+| **mean** | | **0.66** | **0.56** | **0.67** | |
 
 Mean precision@3 of the best platform order: 0.53.
 
@@ -101,12 +101,14 @@ Mean precision@3 of the best platform order: 0.53.
 - **Python data validation (0.67 each).** `pydantic` is first in both; neither fills the other two slots
   with a graded candidate.
 
+- **Customer churn dataset (1.00 each).** This was the biggest loss (0.40 against 1.00). Copies of a
+  dataset are now recognized by their content (the same column names, the same file size, or the same
+  width with a related name) and fold under the original, so `blastchar/telco-customer-churn` leads
+  14 uploads of the same data instead of competing with them. It is first by a narrow margin over the
+  classic bank churn file, which leads 11 uploads of its own.
+
 ### Where it loses
 
-- **Customer churn dataset (0.62 against 1.00).** Kaggle's own first result is the dataset everyone uses
-  (`blastchar/telco-customer-churn`). The ranking now puts it third, up from not at all, but a re-upload
-  under a slightly different name (`telco-churn-7k`) is still first: name matching catches copies called
-  "Telco Customer Churn", not this one.
 - **English speech recognition (0.60 against 0.87).** The Hub leads with `whisper-large-v3` and its turbo
   version. The ranking puts `whisper-small` and `whisper-base` ahead of them: the small models publish
   eval results in their cards, the large ones do not, so the small ones look better evidenced.
@@ -121,19 +123,19 @@ Mean precision@3 of the best platform order: 0.53.
 
 | score part removed | mean nDCG@3 without it | change |
 | --- | ---: | ---: |
-| fit | 0.40 | -0.21 |
-| quality | 0.60 | -0.01 |
-| health | 0.57 | -0.05 |
-| trust | 0.60 | -0.02 |
-| adoption | 0.41 | -0.21 |
+| fit | 0.39 | -0.26 |
+| quality | 0.65 | -0.00 |
+| health | 0.67 | +0.01 |
+| trust | 0.62 | -0.04 |
+| adoption | 0.45 | -0.21 |
 
 A negative change means the part helps. On this set **fit and adoption do the work**: removing either
 costs a third of the score. Adoption carries only 10% of the weight and matters as much as fit at 40%.
-Quality (20%) and trust (15%) change almost nothing, and health (15%) a little.
+Quality (20%), health (15%) and trust (15%) change almost nothing.
 
 ## How the number got here
 
-The number above is the fifth measurement, not the first. In order:
+The number above is the sixth measurement, not the first. In order:
 
 | run | tasks | change | ranking nDCG@3 | best platform order |
 | --- | ---: | --- | ---: | ---: |
@@ -142,9 +144,10 @@ The number above is the fifth measurement, not the first. In order:
 | 3 | 8 | a candidate that matches only the task category keeps 75% of its fit | 0.57 | 0.51 |
 | 4 | 10 | code tasks added (GitHub token); copies of a dataset fold under the original, which is judged on the best evidence about the data but keeps its own license | 0.56 | 0.56 |
 | 5 | 10 | an unclear license counts as neutral (0.5) instead of 0.3 | 0.62 | 0.56 |
+| 6 | 10 | copies of a dataset are recognized by content (columns, file size, width), not only by name | 0.66 | 0.56 |
 
 Each change is defensible on its own terms, and each was chosen after looking at failures on these same
-tasks. Expect a fresh set to score lower than 0.62.
+tasks. Expect a fresh set to score lower than 0.66.
 
 On run 5: the choice to penalize and flag an unclear license stands. Its size was the question. At 0.3 an
 unclear license scored below a license that is known to forbid commercial use, and cost the standard churn
@@ -165,8 +168,9 @@ All landed within 0.01 of the default.
 ## What to do next, in order of expected effect
 
 1. **A real golden set.** Nothing here can be trusted without it.
-2. **Find copies by content, not by name.** Folding copies under the original works for datasets named
-   alike. Re-uploads under other names still compete with it. Row counts and column names would catch them.
+2. **Check the copy matching on more data.** It was tuned on one task. Different versions and
+   repackagings of a dataset count as copies, and so would two different datasets with the same
+   three-word name.
 3. **Give adoption more weight, and quality less**, once a real golden set confirms what the ablation
    shows here.
 4. **Reconsider the pickle-only gate for widely used models**: a warning instead of a removal above some

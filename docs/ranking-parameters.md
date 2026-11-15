@@ -320,8 +320,11 @@ and column counts only.
 **Copies.** A dataset is often re-uploaded under another owner, with a newer date and a tidier license
 label, and a model converted to other formats. Left alone, the copies compete with the original and push
 it out of the top 3. So copies are folded under the original, which is the one entry shown. Datasets count
-as the same data when their names share three or more distinctive words ("telco customer churn"), or
-share a short generic name ("customer churn") *and* have the same size on the same platform. The original
+as the same data when what was read says so (the same column names; on Kaggle the same file size; or the
+same width of eight or more columns with a related name), or when their names share three or more
+distinctive words ("telco customer churn"), or share a short generic name ("customer churn") *and* have
+the same size on the same platform. Two-column text datasets are never matched by shape, because a
+translation keeps the shape of its source. The original
 is the most used member, and among equally used ones the earliest. It is then judged on the best evidence
 about the data (fit, documentation, freshness, use, from whichever copy has it), with one exception: the
 license is the original's own, because a copy's label may not be the uploader's to give. Model conversions

@@ -802,9 +802,12 @@ def score_group(
 
 # --- copies of the same thing ---------------------------------------------------------------------
 
+# Words that say what an upload is for, not which data it is. Left in, "customer churn prediction"
+# would count as a distinctive three-word name and chain unrelated uploads into one family.
 _GENERIC_NAME = frozenset(
     "dataset datasets data csv tsv json parquet file files the of for and with new updated clean cleaned "
-    "full complete official version".split()
+    "full complete official version prediction predicting predict modeling modelling model analysis "
+    "classification regression training train test sample example".split()
 )
 
 
@@ -833,11 +836,45 @@ def _same_thing(a: Scored, b: Scored) -> bool:
         return False  # the same data would match the request equally well
     name_a, name_b = data_name(ca), data_name(cb)
     shared = len(name_a & name_b)
+    if _same_content(ca, cb, shared):
+        return True  # whatever they are called
     if not shared or (name_a != name_b and (shared < 2 or shared / len(name_a | name_b) < 0.75)):
         return False
     # A distinctive name ("telco customer churn") is evidence enough. A short generic one
     # ("customer churn") is shared by unrelated datasets, so it also needs the same size.
     return shared >= 3 or _same_size(ca, cb)
+
+
+MIN_COLUMNS = 4  # fewer than this ("text", "label") is a shape many unrelated datasets share
+WIDE_TABLE = 8  # a column count this high, matched exactly, is evidence in itself
+
+
+def _column_count(c: Candidate) -> int:
+    if c.structure is None:
+        return 0
+    return c.structure.column_count or len(c.structure.columns)
+
+
+def _same_content(a: Candidate, b: Candidate, shared_name_words: int) -> bool:
+    """Do the files themselves say these are the same data, whatever the uploads are called?
+
+    Only what was read counts: column names and row counts on Hugging Face, file size and column
+    count on Kaggle. A translation keeps the rows and columns of its source, so two-column text
+    datasets are never matched here; the fit check above separates the rest.
+    """
+    columns_a = {c.lower() for c in a.structure.columns} if a.structure else set()
+    columns_b = {c.lower() for c in b.structure.columns} if b.structure else set()
+    if len(columns_a) >= MIN_COLUMNS and columns_a == columns_b:
+        return True  # the same column names
+    count_a, count_b = _column_count(a), _column_count(b)
+    same_width = count_a == count_b and count_a >= MIN_COLUMNS
+    if a.source == b.source == "kaggle" and a.size_bytes and b.size_bytes:
+        # The same file compresses to the same size, give or take a few bytes of packaging.
+        same_file = abs(a.size_bytes - b.size_bytes) <= 0.005 * max(a.size_bytes, b.size_bytes)
+        if same_file and (same_width or shared_name_words >= 1):
+            return True
+    # Across platforms only the width can be compared: enough with a wide table and a related name.
+    return same_width and count_a >= WIDE_TABLE and shared_name_words >= 2
 
 
 def _same_size(a: Candidate, b: Candidate) -> bool:

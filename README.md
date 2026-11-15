@@ -11,7 +11,7 @@ today" one tool call.
 
 > **Status: MVP.** Connectors, routing, ranking (the top 3 picks per need) and an evaluation harness work.
 > The evaluation so far, on a small seed set, puts the ranking somewhat ahead of the platforms' own order
-> (nDCG@3 0.62 against 0.56) but behind it on 5 of 10 tasks: it is not yet shown to be better. All three
+> (nDCG@3 0.66 against 0.56) but behind it on 4 of 10 tasks: it is not yet shown to be better. All three
 > platforms have been run live. See
 > [docs/evaluation.md](docs/evaluation.md) for the results and
 > [docs/ranking-parameters.md](docs/ranking-parameters.md) for the parameters, the decisions and the limits.

@@ -540,7 +540,9 @@ def test_the_original_dataset_stands_for_its_copies_even_when_a_copy_scores_high
     wider = kaggle_dataset(
         "copy/telco-customer-churn-11-1-3", "Telco Customer Churn 11.1.3+", 2024, "MIT", 43, size=260_000
     )
-    other = kaggle_dataset("bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190)
+    other = kaggle_dataset(
+        "bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190, size=191_965
+    )
     scored = score([original, newer, wider, other], phrases=["customer churn"])
     # The point of the fix: on their own scores the copies win (newer, tidier license label).
     assert scored["copy/telco-customer-churn-data"].total > scored["first/telco-customer-churn"].total
@@ -636,7 +638,9 @@ def test_a_dataset_is_judged_on_the_best_evidence_about_the_data_but_keeps_its_o
         "first/telco-customer-churn", "Telco Customer Churn", 2018, "Data files © Original Authors", 2995
     )
     newer = kaggle_dataset("copy/telco-customer-churn-data", "Telco Customer Churn Data", 2026, "MIT", 18)
-    other = kaggle_dataset("bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190)
+    other = kaggle_dataset(
+        "bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190, size=191_965
+    )
     scored = score([original, newer, other], phrases=["customer churn"])
     own_total = scored["first/telco-customer-churn"].total
     own_trust = scored["first/telco-customer-churn"].parts["trust"].value
@@ -652,3 +656,86 @@ def test_a_dataset_is_judged_on_the_best_evidence_about_the_data_but_keeps_its_o
     # A dataset with no copies is untouched.
     bank = next(s for s in leaders if s.candidate.id == "bank/bank-customer-churn")
     assert bank.total == scored["bank/bank-customer-churn"].total
+
+
+# --- copies found by content ----------------------------------------------------------------------
+
+TELCO_COLUMNS = [
+    "customerID",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "Contract",
+    "Churn",
+]
+
+
+def hub_dataset(id: str, columns: list[str], rows: float, **fields: Any) -> Candidate:
+    return make(
+        need="dataset",
+        id=id,
+        description="customer churn",
+        enriched=True,
+        structure=DatasetStructure(columns=columns, total_rows=rows, splits={"default/train": rows}),
+        metrics={"downloads": 50.0, "likes": 1.0},
+        **fields,
+    )
+
+
+def folded(candidates: list[Candidate]) -> dict[str, list[str]]:
+    leaders = fold_copies(list(score(candidates, phrases=["customer churn"]).values()))
+    return {s.candidate.id: s.variants for s in leaders}
+
+
+def test_uploads_with_the_same_columns_are_the_same_data_whatever_they_are_called() -> None:
+    one = hub_dataset("a/telco-churn-7k", TELCO_COLUMNS, 7000, created_at=months_ago(30))
+    two = hub_dataset(
+        "b/phone-company-leavers", [c.upper() for c in TELCO_COLUMNS], 7000, created_at=months_ago(3)
+    )
+    other = hub_dataset(
+        "c/bank-exits", ["RowNumber", "Surname", "CreditScore", "Geography", "Exited"], 10_000
+    )
+    assert folded([one, two, other]) == {"a/telco-churn-7k": ["b/phone-company-leavers"], "c/bank-exits": []}
+
+
+def test_a_translation_keeps_the_shape_of_its_source_and_is_not_a_copy() -> None:
+    english = hub_dataset("lab/imdb", ["text", "label"], 100_000)
+    javanese = hub_dataset("x/imdb-javanese", ["text", "label"], 100_000)
+    assert folded([english, javanese]) == {"lab/imdb": [], "x/imdb-javanese": []}
+
+
+def test_kaggle_uploads_of_the_same_file_are_the_same_data() -> None:
+    def upload(id: str, title: str, size: int, columns: int, notebooks: float, year: int) -> Candidate:
+        c = kaggle_dataset(id, title, year, "MIT", notebooks, size=size)
+        c.structure = DatasetStructure(file_types=[".csv"], column_count=columns)
+        return c
+
+    original = upload("first/bank-customer-churn-modeling", "Bank Turnover Dataset", 267_794, 14, 400, 2019)
+    renamed = upload("copy/customer-churn-dataset", "Customer Churn Dataset", 267_794, 14, 20, 2024)
+    near = upload("copy/telcom-leavers", "Telcom Leavers", 268_100, 14, 5, 2025)  # 0.1% apart, same width
+    unrelated = upload("other/customer-churn", "Customer Churn", 46_575, 11, 250, 2020)
+    same_size_only = upload(
+        "other/shop-returns", "Shop Returns", 267_800, 9, 30, 2022
+    )  # nothing else in common
+    result = folded([original, renamed, near, unrelated, same_size_only])
+    assert set(result) == {"first/bank-customer-churn-modeling", "other/customer-churn", "other/shop-returns"}
+    assert set(result["first/bank-customer-churn-modeling"]) == {
+        "copy/customer-churn-dataset",
+        "copy/telcom-leavers",
+    }
+
+
+def test_a_wide_table_of_the_same_width_links_a_related_name_across_platforms() -> None:
+    kaggle = kaggle_dataset("first/telco-customer-churn", "Telco Customer Churn", 2018, "Other", 2995)
+    kaggle.structure = DatasetStructure(file_types=[".csv"], column_count=21)
+    wide = [f"column_{n}" for n in range(21)]
+    renamed = hub_dataset("org/telco-churn-7k", wide, 7000, created_at=months_ago(14))
+    other_columns = [f"field_{n}" for n in range(21)]
+    unrelated_name = hub_dataset("org/hr-attrition", other_columns, 7000, created_at=months_ago(14))
+    narrow = hub_dataset("org/telco-churn-mini", ["a", "b", "c", "d", "e"], 7000)
+    result = folded([kaggle, renamed, unrelated_name, narrow])
+    # Same width and a related name: a copy. Same width alone, or a related name alone: not shown to be.
+    assert result["first/telco-customer-churn"] == ["huggingface:org/telco-churn-7k"]
+    assert set(result) == {"first/telco-customer-churn", "org/hr-attrition", "org/telco-churn-mini"}
