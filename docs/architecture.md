@@ -47,7 +47,8 @@ flowchart TD
 | security evidence | OpenSSF Scorecard and known vulnerabilities for repositories, over plain HTTPS (`api.scorecard.dev`, `api.deps.dev`): the one place that does not go through an MCP server | `ranking/evidence.py` |
 | gates | facts that disqualify: archived, a critical known vulnerability, license against the constraints, pickle-only weights, size, age, poor fit | `ranking/scoring.py` |
 | scores | fit, quality, health, trust, adoption, each 0 to 1; unknown evidence is neutral and reported | `ranking/scoring.py` |
-| selection | best first; conversions, forks and re-uploads fold into the pick they duplicate | `ranking/scoring.py` |
+| copies | re-uploads of a dataset and conversions of a model fold under the original, which is the entry shown | `ranking/scoring.py` |
+| selection | best first; remaining near-duplicates fold into the pick they duplicate | `ranking/scoring.py` |
 | pipeline | route, gather, score, read the shortlist, score again, pick, explain | `ranking/engine.py` |
 
 Scores are computed per need: a repository is never compared with a dataset. Models and datasets come from
@@ -92,7 +93,8 @@ code. Command: `open-intelligence eval`. Method and results: [evaluation.md](eva
   `ambiguities`.
 - **Stateless connections.** One short MCP connection per source per request. A source that is down or
   missing a token affects only its own results, and the error says what to fix.
-- **Tokens from the environment only.** Never in the config file, tool arguments, results or errors.
+- **Tokens from the environment or a `.env` file.** Never in the TOML config, tool arguments, results or
+  errors. A token pasted into the config where a variable name belongs is refused at load.
 - **Gates before scores, and popularity last.** A disqualifying fact removes a candidate whatever its
   score. Adoption is 10% of the score, relative to the other candidates, and damped when signals disagree.
 - **Unknown is neutral and visible.** Missing evidence neither helps nor hurts a candidate; it is listed

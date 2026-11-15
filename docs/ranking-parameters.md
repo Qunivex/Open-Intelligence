@@ -2,8 +2,9 @@
 
 Status: **the pipeline in section 9 and the evaluation in section 10 are built**
 (`src/open_intelligence/ranking/`, `src/open_intelligence/evaluation/`, tool `find_top_picks`). It follows
-the decisions recorded in section 11. The first evaluation, on a small seed set, shows the ranking only
-slightly ahead of the platforms' own order and losing on most tasks: see [evaluation.md](evaluation.md).
+the decisions recorded in section 11. The evaluation so far, on a small seed set, shows the ranking
+somewhat ahead of the platforms' own order on average and behind it on half the tasks: see
+[evaluation.md](evaluation.md).
 The weights and thresholds are still a hypothesis. Section 13 lists what is built, what is left out, and
 what running it against the live servers showed.
 
@@ -316,6 +317,16 @@ the `datasets` library do not run such scripts), and a dataset whose rows the Hu
 or outage of the viewer is reported as "not checked", never as a defect. Kaggle's server offers file types
 and column counts only.
 
+**Copies.** A dataset is often re-uploaded under another owner, with a newer date and a tidier license
+label, and a model converted to other formats. Left alone, the copies compete with the original and push
+it out of the top 3. So copies are folded under the original, which is the one entry shown. Datasets count
+as the same data when their names share three or more distinctive words ("telco customer churn"), or
+share a short generic name ("customer churn") *and* have the same size on the same platform. The original
+is the most used member, and among equally used ones the earliest. It is then judged on the best evidence
+about the data (fit, documentation, freshness, use, from whichever copy has it), with one exception: the
+license is the original's own, because a copy's label may not be the uploader's to give. Model conversions
+fold under their base model the same way, without sharing evidence.
+
 **Top 3.** Best score first. A conversion or adapter of a model, a fork, or a same-named re-upload is not a
 separate option: it is listed under the pick it duplicates (`also_available_as`). Two fine-tunes of one base
 model can both appear, with a small penalty for the second.
@@ -326,9 +337,9 @@ had it.
 
 ### What it leaves out
 
-- **GitHub is not verified against the live server.** That needs a token. Its parser follows the result
-  types in GitHub's documentation and is tested against hand-written fixtures only.
-  The security lookups were run live on well-known repositories, but never through a full ranking.
+- **GitHub fixtures are still hand-written.** The GitHub side has now run live end to end (search,
+  README, releases, Scorecard, vulnerabilities, two evaluation tasks) and the parser needed no change, but
+  the offline tests use fixtures written to the documented shapes, not recordings.
 - **Repositories:** no dependents or package downloads. Issue response times and contributor counts are
   not read. Tests and CI are inferred from the README. Vulnerabilities are checked for the current release
   of one package; repositories that publish under another name, or several packages, are not covered.
@@ -387,3 +398,15 @@ had it.
 - **The evaluation changed the ranking twice and showed where it still loses**: re-uploads beating the
   original dataset, the pickle-only gate removing the standard German NER models, and freshness and
   card-declared evals carrying weight they do not earn. See [evaluation.md](evaluation.md).
+
+### What the live runs showed (2026-11-15, with a GitHub token)
+
+- **GitHub works as assumed.** The search, README and release responses matched the parser written from
+  GitHub's documentation. For "Python HTTP client" the picks were `urllib3`, `requests` and `aiohttp`, each
+  with its OpenSSF Scorecard and "no known vulnerabilities" in the current release; an archived repository
+  was filtered out. Two defects showed up and were fixed: a README called `README.rst` was not found, and
+  a repository whose README could not be read got full marks for quality.
+- **An unclear license was penalized harder than a restrictive one.** It counted as 0.3, below a license
+  known to forbid commercial use (0.45). It now counts as neutral, 0.5, and is still flagged.
+- **Folding copies helps only as far as names go.** The original churn dataset went from outside the top 3
+  to third. A re-upload called `telco-churn-7k` is still first.

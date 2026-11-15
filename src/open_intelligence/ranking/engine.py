@@ -32,6 +32,7 @@ from open_intelligence.ranking.scoring import (
     PARTS,
     Scored,
     benchmark_tables,
+    fold_copies,
     human,
     pick_diverse,
     score_group,
@@ -163,11 +164,11 @@ class Ranker:
                     final=read_round > 0,
                     specifics=self._specifics(request, need),
                 )
+                # Copies and conversions do not compete for a read: the original stands for them.
+                leaders = fold_copies(scored)
                 for source in sorted({c.source for c in pool.values()}):
                     adapter = ADAPTERS[(source, need)]
-                    passing = [
-                        s.candidate for s in scored if s.candidate.source == source and not s.gate_failures
-                    ]
+                    passing = [s.candidate for s in leaders if s.candidate.source == source]
                     if not adapter.reads_shortlist:
                         eligible.update(c.key for c in passing)
                         continue
@@ -216,7 +217,9 @@ class Ranker:
                 final=True,
                 specifics=self._specifics(request, need),
             )
-            in_running = [s for s in scored if s.candidate.key in eligible and not s.gate_failures]
+            leaders = fold_copies(scored, prefer=eligible, weights=settings.weights)
+            in_running = [s for s in leaders if s.candidate.key in eligible]
+            in_running.sort(key=lambda s: -s.total)
             picks = pick_diverse(in_running, top)
             all_picks.extend(picks)
             contenders.extend(scored[:10])

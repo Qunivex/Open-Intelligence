@@ -10,9 +10,9 @@ and no idea that a better maintained project already exists. Open Intelligence m
 today" one tool call.
 
 > **Status: MVP.** Connectors, routing, ranking (the top 3 picks per need) and an evaluation harness work.
-> The first evaluation, on a small seed set, puts the ranking only slightly ahead of the platforms' own
-> order (nDCG@3 0.57 against 0.51) and behind it on 5 of 8 tasks: it is not yet shown to be better. The
-> GitHub side has not been run against the live server (it needs a token). See
+> The evaluation so far, on a small seed set, puts the ranking somewhat ahead of the platforms' own order
+> (nDCG@3 0.62 against 0.56) but behind it on 5 of 10 tasks: it is not yet shown to be better. All three
+> platforms have been run live. See
 > [docs/evaluation.md](docs/evaluation.md) for the results and
 > [docs/ranking-parameters.md](docs/ranking-parameters.md) for the parameters, the decisions and the limits.
 
@@ -68,13 +68,24 @@ cd Open-Intelligence && pip install -e .
 
 ## Tokens
 
-Tokens are read from environment variables only, never from files or tool calls.
+Tokens are read from environment variables, or from a `.env` file, and never from the TOML config or
+from tool calls.
 
 | source | variable | needed? |
 | --- | --- | --- |
 | GitHub | `GITHUB_PERSONAL_ACCESS_TOKEN` (or `GITHUB_TOKEN`) | **yes**: GitHub's MCP server needs a token. A fine-grained PAT with read access to public repositories is enough. |
 | Hugging Face | `HF_TOKEN` | no: search works anonymously; a read token raises rate limits |
 | Kaggle | `KAGGLE_API_TOKEN` | for notebook and competition search; dataset and model search work anonymously. Create one under Kaggle Settings > API (it starts with `KGAT`). |
+
+The simplest setup is a `.env` file (`NAME=value` lines) in the directory you run from, or in
+`~/.config/open-intelligence/`:
+
+```
+GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_...
+```
+
+`.env` is in `.gitignore`. Do not put a token in `open-intelligence.toml` or the example file: `token_env`
+there takes the *name* of the variable, and a token pasted in its place is refused.
 
 Check what is connected:
 
@@ -207,9 +218,9 @@ that the parsers still read their formats.
    order, ablations, record and replay ([first results](docs/evaluation.md)).
 4. **A real golden set**: 30 to 50 tasks per type, graded by practitioners. The one that ships is a seed
    written by the assistant that built the ranking. Not started.
-5. **What the first evaluation says to fix**: re-uploads outranking the original dataset, the pickle-only
-   gate removing standard models, freshness and card-declared evals carrying weight they do not earn, fit
-   judged by words instead of meaning.
+5. **What the evaluation says to fix**: re-uploads under other names still outranking the original
+   dataset, the pickle-only gate removing standard models, card-declared evals carrying weight they do not
+   earn, adoption deserving more weight than it has, fit judged by words instead of meaning.
 
 ## License
 

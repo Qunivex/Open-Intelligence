@@ -215,3 +215,17 @@ async def test_recorder_keeps_security_answers_too(ranked_connector: Connector) 
     recorder = Recorder(ranked_connector, {"fetches": {"https://example.test/a": [200, {"score": 7}]}})
     assert await recorder.fetch("https://example.test/a") == (200, {"score": 7})
     assert await recorder.fetch("https://example.test/missing") == (0, None)  # replay: never the network
+
+
+@pytestmark_async
+async def test_a_live_run_asks_again_for_what_failed_last_time(ranked_connector: Connector) -> None:
+    key = Recorder._key("kaggle", "search_datasets", {"request": {"search": "x"}})
+    failed = {"calls": {key: {"ok": False, "text": "", "structured": None, "error": "kaggle needs a token"}}}
+    replay = Recorder(ranked_connector, failed)
+    (outcome,) = await replay.call_many("kaggle", [("search_datasets", {"request": {"search": "x"}})])
+    assert not outcome.ok  # a replay repeats what was recorded, failures included
+
+    live = Recorder(ranked_connector, failed)
+    live.replay_only = False
+    (outcome,) = await live.call_many("kaggle", [("search_datasets", {"request": {"search": "x"}})])
+    assert outcome.ok  # live, the failure is not taken for an answer

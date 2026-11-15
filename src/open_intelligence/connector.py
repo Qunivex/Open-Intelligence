@@ -14,7 +14,6 @@ Safety rules enforced here, not left to the agent:
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -29,7 +28,7 @@ from mcp.client.streamable_http import streamable_http_client
 # The SDK's own factory for an HTTP client with MCP-appropriate timeouts and headers.
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from open_intelligence.config import Settings
+from open_intelligence.config import Settings, token_environment
 from open_intelligence.sources import SourceSpec
 
 T = TypeVar("T")
@@ -101,7 +100,10 @@ _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 class Connector:
     def __init__(self, settings: Settings, environ: Mapping[str, str] | None = None) -> None:
         self.settings = settings
-        self._environ: Mapping[str, str] = environ if environ is not None else os.environ
+        # Tokens come from the environment, or from a git-ignored .env file next to where this runs.
+        self._environ: Mapping[str, str] = (
+            environ if environ is not None else token_environment(settings.sources)
+        )
 
     # --- configuration ------------------------------------------------------------------------
 

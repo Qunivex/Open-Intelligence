@@ -1,13 +1,13 @@
 # Evaluation
 
 Does the ranking put better candidates first than each platform's own order? This page describes how
-that is measured, and what the first measurement showed.
+that is measured, and what the measurements so far show.
 
-**Short version (2026-11-14, seed set, 8 tasks):** the ranking scores slightly higher on average than the
-platforms' own order (nDCG@3 0.57 against 0.51) but wins only 3 of the 8 tasks and loses 5. That is not
-yet evidence that the ranking is better. The set is small, it was graded by the assistant that built the
-ranking, and two fixes were made after seeing the first result. Read the numbers as a list of what to fix
-next, not as a score.
+**Short version (data of 2026-11-14, seed set, 10 tasks):** the ranking scores somewhat higher on average
+than the platforms' own order (nDCG@3 0.62 against 0.56). It wins 3 tasks, ties 2 and loses 5. That is
+not yet evidence that the ranking is better. The set is small, it was graded by the assistant that built
+the ranking, and several fixes were made after seeing earlier results on these same tasks. Read the
+numbers as a list of what to fix next, not as a score.
 
 ## How it works
 
@@ -45,27 +45,25 @@ open-intelligence eval --replay run.json.gz --json
 
 `--golden path.toml` uses your own golden set; without it the seed set shipped with the package is used
 ([seed.toml](../src/open_intelligence/evaluation/seed.toml), which also documents the file format).
-`--no-ablations` skips the five extra runs. A live run of the seed set took under two minutes. Hugging
-Face's dataset viewer rate-limits anonymous callers (it did during this work), so set `HF_TOKEN` for
-repeated runs. A recording of the seed set is about 3.5 MB and is not kept in the repository.
+`--no-ablations` skips the five extra runs. A live run of the seed set takes a few minutes. Hugging Face's
+dataset viewer rate-limits anonymous callers (it did during this work), so set `HF_TOKEN` for repeated
+runs. A recording of the seed set is several megabytes and is not kept in the repository.
 
 To change the weights, set them under `[ranking.weights]` in the config file and replay a recording.
 
 ## The seed set, and why not to trust it yet
 
-Ten tasks: four models, four datasets, two code. The two code tasks need a GitHub token and were skipped,
-so **nothing below says anything about repositories**, including the OpenSSF Scorecard and vulnerability
-evidence.
+Ten tasks: four models, four datasets, two code.
 
 - The grades were written by the AI assistant that built the ranking, from general knowledge of the
   fields and from what the searches returned. That is a conflict of interest.
-- Eight scored tasks is far too few to separate a real difference from noise.
-- Two changes to the ranking were made after the first run and measured again on the same tasks (see
-  "How the number got here"). A result measured on the tasks that prompted the change is optimistic.
+- Ten tasks is far too few to separate a real difference from noise.
+- Five changes to the ranking were made after seeing results on these tasks (see "How the number got
+  here"). A result measured on the tasks that prompted the change is optimistic.
 
 The project needs 30 to 50 tasks per type, graded by practitioners who have not seen the ranking's output.
 
-## First results
+## Results
 
 Data as of 2026-11-14. Weights: fit 40%, quality 20%, health 15%, trust 15%, adoption 10%.
 
@@ -76,14 +74,14 @@ Data as of 2026-11-14. Weights: fit 40%, quality 20%, health 15%, trust 15%, ado
 | sentence-embeddings-english-model | model | 1.00 | 0.30 | 1.00 | 1.00 |
 | german-ner-model | model | 0.28 | 0.40 | 0.33 | 1.00 |
 | german-ner-dataset | dataset | 0.88 | 0.16 | 0.67 | 1.00 |
-| movie-review-sentiment-dataset | dataset | 0.47 | 0.51 | 0.33 | 0.33 |
+| movie-review-sentiment-dataset | dataset | 0.51 | 0.51 | 0.33 | 0.67 |
 | question-answering-dataset | dataset | 0.50 | 0.70 | 0.33 | 0.67 |
-| customer-churn-dataset | dataset | 0.40 | 1.00 | 0.33 | 1.00 |
-| python-http-client | code | skipped | | | |
-| python-data-validation | code | skipped | | | |
-| **mean** | | **0.57** | **0.51** | **0.58** | |
+| customer-churn-dataset | dataset | 0.62 | 1.00 | 0.67 | 1.00 |
+| python-http-client | code | 0.73 | 0.83 | 1.00 | 1.00 |
+| python-data-validation | code | 0.67 | 0.67 | 0.33 | 0.33 |
+| **mean** | | **0.62** | **0.56** | **0.63** | |
 
-Mean precision@3 of the best platform order: 0.50.
+Mean precision@3 of the best platform order: 0.53.
 
 ### Where it wins
 
@@ -95,64 +93,84 @@ Mean precision@3 of the best platform order: 0.50.
 - **English sentiment model (0.40 against 0.16).** Both are weak; the platforms lead with a
   financial-news model and its conversion.
 
+### Where it ties
+
+- **Movie review dataset (0.51 each).** `stanfordnlp/imdb` is first in both. The ranking's other two picks
+  are a small community dataset and a film metadata table: word matching cannot tell "movie reviews" from
+  "movies with review counts".
+- **Python data validation (0.67 each).** `pydantic` is first in both; neither fills the other two slots
+  with a graded candidate.
+
 ### Where it loses
 
-- **Customer churn dataset (0.40 against 1.00).** Kaggle's own first result is the dataset everyone uses
-  (`blastchar/telco-customer-churn`). The ranking prefers re-uploads of the same data: they are newer and
-  carry a clean license label, while the original says "Data files © Original Authors" and was last
-  updated in 2018. Penalizing an unclear license rewards whoever re-uploaded the data under a label they
-  may have had no right to choose.
+- **Customer churn dataset (0.62 against 1.00).** Kaggle's own first result is the dataset everyone uses
+  (`blastchar/telco-customer-churn`). The ranking now puts it third, up from not at all, but a re-upload
+  under a slightly different name (`telco-churn-7k`) is still first: name matching catches copies called
+  "Telco Customer Churn", not this one.
 - **English speech recognition (0.60 against 0.87).** The Hub leads with `whisper-large-v3` and its turbo
   version. The ranking puts `whisper-small` and `whisper-base` ahead of them: the small models publish
   eval results in their cards, the large ones do not, so the small ones look better evidenced.
+- **Python HTTP client (0.73 against 0.83).** All three picks are good (`urllib3`, `requests`, `aiohttp`),
+  but GitHub's own order leads with `httpx`, which the ranking leaves fourth.
 - **Question answering dataset (0.50 against 0.70).** `squad_v2` is first, but a multiple-choice benchmark
   that is merely filed under "question answering" is second and plain `squad` misses the top 3.
 - **German NER model (0.28 against 0.40).** The standard models (`flair/ner-german-large`,
   `flair/ner-german`) ship only pickle weights, so the gate removes them.
-- **Movie review dataset (0.47 against 0.51).** `stanfordnlp/imdb` is first; the next two picks are a film
-  metadata table from Kaggle and an ungraded re-upload. Word matching cannot tell "movie reviews" from
-  "movies with review counts".
 
 ### Which parts of the score earn their weight
 
 | score part removed | mean nDCG@3 without it | change |
 | --- | ---: | ---: |
-| fit | 0.29 | -0.28 |
-| quality | 0.56 | -0.01 |
-| health | 0.57 | +0.01 |
-| trust | 0.50 | -0.07 |
-| adoption | 0.52 | -0.05 |
+| fit | 0.40 | -0.21 |
+| quality | 0.60 | -0.01 |
+| health | 0.57 | -0.05 |
+| trust | 0.60 | -0.02 |
+| adoption | 0.41 | -0.21 |
 
-A negative change means the part helps. On this set fit does most of the work, trust and adoption help a
-little, and **quality (20%) and health (15%) change almost nothing**. Freshness in particular does not
-separate good models and datasets from poor ones: the standard choices are often years old and stable.
-
-Three other weightings were tried on the same recorded data (before the second fix below), each moving
-weight from health to adoption. All landed within 0.01 of the default. The weights are not what holds the
-result back; the losses above are.
+A negative change means the part helps. On this set **fit and adoption do the work**: removing either
+costs a third of the score. Adoption carries only 10% of the weight and matters as much as fit at 40%.
+Quality (20%) and trust (15%) change almost nothing, and health (15%) a little.
 
 ## How the number got here
 
-The first run was not the number above. In order:
+The number above is the fifth measurement, not the first. In order:
 
-| run | change | ranking nDCG@3 | best platform order |
-| --- | --- | ---: | ---: |
-| 1 | as first built, with task browsing by "most downloaded" and "trending" | 0.39 | 0.51 |
-| 2 | "trending" removed: it filled the list with that week's uploads | 0.49 | 0.51 |
-| 3 | a candidate that matches only the task category keeps 75% of its fit | 0.57 | 0.51 |
+| run | tasks | change | ranking nDCG@3 | best platform order |
+| --- | ---: | --- | ---: | ---: |
+| 1 | 8 | as first built, with task browsing by "most downloaded" and "trending" | 0.39 | 0.51 |
+| 2 | 8 | "trending" removed: it filled the list with that week's uploads | 0.49 | 0.51 |
+| 3 | 8 | a candidate that matches only the task category keeps 75% of its fit | 0.57 | 0.51 |
+| 4 | 10 | code tasks added (GitHub token); copies of a dataset fold under the original, which is judged on the best evidence about the data but keeps its own license | 0.56 | 0.56 |
+| 5 | 10 | an unclear license counts as neutral (0.5) instead of 0.3 | 0.62 | 0.56 |
 
-Both changes are defensible on their own terms, and both were chosen after looking at failures on these
-same eight tasks. Expect a fresh set to score lower than 0.57.
+Each change is defensible on its own terms, and each was chosen after looking at failures on these same
+tasks. Expect a fresh set to score lower than 0.62.
+
+On run 5: the choice to penalize and flag an unclear license stands. Its size was the question. At 0.3 an
+unclear license scored below a license that is known to forbid commercial use, and cost the standard churn
+dataset ten points against re-uploads with a tidier label. Three sizes were measured on the same data:
+
+| unclear license counts as | ranking nDCG@3 | churn task |
+| ---: | ---: | ---: |
+| 0.3 | 0.56 | 0.16 |
+| 0.5 | 0.62 | 0.62 |
+| 0.7 | 0.65 | 0.76 |
+
+0.5 was chosen because it is what "unknown is neither good nor bad" means, not because it scored best:
+0.7 scored higher, but would rank an unclear license above one known to restrict use.
+
+Earlier, before runs 4 and 5, three other weightings were tried that moved weight from health to adoption.
+All landed within 0.01 of the default.
 
 ## What to do next, in order of expected effect
 
-1. **A real golden set.** Nothing below can be trusted without it.
-2. **Run the code tasks** with a GitHub token. The repository side has never been evaluated.
-3. **Stop rewarding re-uploads.** Find the original of a dataset (same files, earlier date, more notebooks)
-   and rank it, not its copies; treat a clean license on a copy of unclearly licensed data as unclear.
+1. **A real golden set.** Nothing here can be trusted without it.
+2. **Find copies by content, not by name.** Folding copies under the original works for datasets named
+   alike. Re-uploads under other names still compete with it. Row counts and column names would catch them.
+3. **Give adoption more weight, and quality less**, once a real golden set confirms what the ablation
+   shows here.
 4. **Reconsider the pickle-only gate for widely used models**: a warning instead of a removal above some
    level of adoption, or when the publisher is the original lab.
 5. **Do not let "has eval results in its card" outrank a better model without them**: compare within a
    model family, or use a task leaderboard.
-6. **Replace freshness for models and datasets** with "has it been superseded", or drop it.
-7. **Judge fit by meaning.** Several losses come from matching words rather than what the candidate is.
+6. **Judge fit by meaning.** Several losses come from matching words rather than what the candidate is.

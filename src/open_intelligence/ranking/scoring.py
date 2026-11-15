@@ -30,7 +30,7 @@ from open_intelligence.config import RankingSettings
 from open_intelligence.ranking.adapters import has_safe_weights, hub_task, pickle_only
 from open_intelligence.ranking.licenses import LICENSE_TRUST, classify
 from open_intelligence.ranking.models import Candidate, Constraints, EvalResult
-from open_intelligence.ranking.text import Vocabulary, coverage, jaccard
+from open_intelligence.ranking.text import Vocabulary, coverage, jaccard, words
 
 NEUTRAL = 0.5
 PARTS = ("fit", "quality", "health", "trust", "adoption")
@@ -62,7 +62,8 @@ class Scored:
     unresolved: list[str] = field(default_factory=list)
     covered: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
-    variants: list[str] = field(default_factory=list)
+    variants: list[str] = field(default_factory=list)  # copies and conversions of the same thing
+    lead: float = 0.0  # the best total among this candidate and its copies (set by fold_copies)
 
 
 def _months_between(earlier: datetime, later: datetime) -> float:
@@ -239,7 +240,10 @@ def _quality_code(c: Candidate, s: Scored) -> Part:
     if not c.doc_text:
         s.unresolved.append("README was not read")
         release = {True: 1.0, False: 0.3}.get(c.has_releases) if c.has_releases is not None else None
-        return Part(release)
+        if release is None:
+            return Part(None)
+        # Releases are known, documentation and tests are not: those two count as neutral.
+        return Part(_mix([(0.5, None), (0.3, release), (0.2, None)]))
     doc = c.doc_text
     install = _has(
         r"pip install|npm i(nstall)? |yarn add|cargo (add|install)|go (get|install)|brew install|docker (run|pull)|installation",
@@ -794,6 +798,143 @@ def score_group(
         scored.append(s)
     scored.sort(key=lambda s: (-s.total, s.candidate.position, s.candidate.id))
     return scored
+
+
+# --- copies of the same thing ---------------------------------------------------------------------
+
+_GENERIC_NAME = frozenset(
+    "dataset datasets data csv tsv json parquet file files the of for and with new updated clean cleaned "
+    "full complete official version".split()
+)
+
+
+def data_name(c: Candidate) -> frozenset[str]:
+    """The words that identify a dataset: its title without filler words and version numbers."""
+    return frozenset(
+        w
+        for w in words(c.title or c.name)
+        if w not in _GENERIC_NAME and not re.fullmatch(r"v?[\d.]+[a-z]?", w)
+    )
+
+
+def _same_thing(a: Scored, b: Scored) -> bool:
+    """Is one of these a copy or conversion of the other (or both of a third)?"""
+    ca, cb = a.candidate, b.candidate
+    if ca.need != cb.need:
+        return False
+    if ca.need == "model":
+        base_a = ca.base_model if ca.lineage in ("quantized", "adapter") else None
+        base_b = cb.base_model if cb.lineage in ("quantized", "adapter") else None
+        return bool((base_a and base_a in (cb.id, base_b)) or (base_b and base_b == ca.id))
+    if ca.need != "dataset":
+        return False
+    fit_a, fit_b = a.parts["fit"].value, b.parts["fit"].value
+    if fit_a is not None and fit_b is not None and abs(fit_a - fit_b) > 0.2:
+        return False  # the same data would match the request equally well
+    name_a, name_b = data_name(ca), data_name(cb)
+    shared = len(name_a & name_b)
+    if not shared or (name_a != name_b and (shared < 2 or shared / len(name_a | name_b) < 0.75)):
+        return False
+    # A distinctive name ("telco customer churn") is evidence enough. A short generic one
+    # ("customer churn") is shared by unrelated datasets, so it also needs the same size.
+    return shared >= 3 or _same_size(ca, cb)
+
+
+def _same_size(a: Candidate, b: Candidate) -> bool:
+    """Do two datasets on one platform have the same amount of data? False when it is not known."""
+    if a.source != b.source:
+        return False  # bytes on Kaggle and rows on Hugging Face cannot be compared
+    rows_a = a.structure.total_rows if a.structure else None
+    rows_b = b.structure.total_rows if b.structure else None
+    if rows_a and rows_b:
+        return abs(rows_a - rows_b) <= 0.01 * max(rows_a, rows_b)
+    if a.size_bytes and b.size_bytes:
+        return abs(a.size_bytes - b.size_bytes) <= 0.1 * max(a.size_bytes, b.size_bytes)
+    return False
+
+
+def _original(members: list[Scored]) -> Scored:
+    """The member the others were copied from, as far as the evidence shows."""
+    if members[0].candidate.need == "model":
+        sources = [s for s in members if s.candidate.lineage not in ("quantized", "adapter")]
+        return max(sources or members, key=lambda s: (s.parts["adoption"].counted, s.total))
+
+    def used(s: Scored) -> float:
+        return s.parts["adoption"].value or 0.0
+
+    def first_seen(s: Scored) -> float:
+        date = s.candidate.created_at or s.candidate.updated_at
+        return date.timestamp() if date else float("inf")
+
+    # Among the most used, the one that was there first: a copy is uploaded later and used less.
+    most = max(used(s) for s in members)
+    return min((s for s in members if used(s) >= most - 0.1), key=lambda s: (first_seen(s), -used(s)))
+
+
+def fold_copies(
+    scored: list[Scored], prefer: set[str] | None = None, weights: dict[str, float] | None = None
+) -> list[Scored]:
+    """One entry for each distinct thing: the original, with its copies listed as its variants.
+
+    A dataset is often re-uploaded under other names, with a newer date and a tidier license
+    label, and a model converted to other formats. Left alone, the copies compete with the
+    original and can push it out of the top 3. Folding keeps the original as the entry point,
+    judged on its own evidence, and lists the copies with it.
+
+    With ``weights``, a dataset is then judged on the best evidence there is about the data: how
+    well it fits, how well any copy documents it, how recently any copy was kept up, how much it is
+    used. The license is the exception. It stays the original's own, because a copy's tidier label
+    may not be the uploader's to give.
+
+    Candidates that failed a gate are left out. ``prefer`` narrows the choice of representative
+    to the keys given (those that were read), when a family has any. Returned best first, by
+    ``lead``: the best total in the family, so a family is not passed over for reading because
+    its original scores lower before it has been read.
+    """
+    live = [s for s in scored if not s.gate_failures]
+    parent = list(range(len(live)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(live)):
+        for j in range(i + 1, len(live)):
+            if _same_thing(live[i], live[j]):
+                parent[root(j)] = root(i)
+    families: dict[int, list[Scored]] = {}
+    for i, entry in enumerate(live):
+        families.setdefault(root(i), []).append(entry)
+
+    leaders = []
+    for members in families.values():
+        choice = [m for m in members if prefer is not None and m.candidate.key in prefer] or members
+        leader = _original(choice) if len(choice) > 1 else choice[0]
+        others = sorted((m for m in members if m is not leader), key=lambda m: -m.total)
+        leader.lead = max(m.total for m in members)
+        leader.variants = [
+            m.candidate.id if m.candidate.source == leader.candidate.source else m.candidate.key
+            for m in others
+        ][:6]
+        if others:
+            kind = "conversions" if leader.candidate.need == "model" else "copies"
+            leader.parts["adoption"].reasons.append(
+                f"the original among {len(members)} {kind} of the same {leader.candidate.need} that were found"
+            )
+            if weights is not None and leader.candidate.need == "dataset":
+                for name in ("fit", "quality", "health", "adoption"):
+                    values = [m.parts[name].value or 0.0 for m in others]
+                    best = others[values.index(max(values))]
+                    theirs, own = best.parts[name].value, leader.parts[name].value
+                    if theirs is not None and (own is None or theirs > own):
+                        via = f" (from its copy {best.candidate.id})"
+                        leader.parts[name] = Part(theirs, [r + via for r in best.parts[name].reasons])
+                leader.total = sum(weights[name] * leader.parts[name].counted for name in PARTS)
+        leaders.append(leader)
+    leaders.sort(key=lambda s: (-s.lead, s.candidate.position, s.candidate.id))
+    return leaders
 
 
 # --- a diverse top N ------------------------------------------------------------------------------

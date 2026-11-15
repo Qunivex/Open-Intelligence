@@ -469,3 +469,32 @@ def test_a_phrasing_that_names_a_hub_task_browses_it_instead_of_searching_names(
     assert dataset_browse.baseline
     # Other platforms take the hint and ignore it.
     assert A.KaggleDatasets().search_calls(["question answering"], 5, ["en"])[0].tool == "search_datasets"
+
+
+def test_github_readme_under_another_name_gets_a_second_try() -> None:
+    adapter = A.GitHubCode()
+    c = Candidate(source="github", need="code", id="aio-libs/aiohttp", url="u")
+    readme = adapter.enrich_calls([c])[0]
+    adapter.apply({c.id: c}, readme, outcome(error="failed to get file contents: 404 Not Found"))
+    assert c.read_notes == [A.README_MISSING]
+    assert not c.enriched
+
+    (retry,) = adapter.follow_up_calls([c])
+    assert retry.arguments == {"owner": "aio-libs", "repo": "aiohttp", "path": "README.rst"}
+    adapter.apply(
+        {c.id: c}, retry, outcome(text="successfully downloaded text file (SHA: 1)\nAsync HTTP client")
+    )
+    assert c.doc_text == "Async HTTP client"
+    assert c.enriched
+    assert c.read_notes == []  # found after all
+    assert adapter.follow_up_calls([c]) == []  # nothing left to retry
+
+    still_missing = Candidate(source="github", need="code", id="x/y", url="u")
+    adapter.apply({"x/y": still_missing}, readme_for(adapter, still_missing), outcome(error="404"))
+    (again,) = adapter.follow_up_calls([still_missing])
+    adapter.apply({"x/y": still_missing}, again, outcome(error="404"))
+    assert still_missing.read_notes == [A.README_MISSING]  # said once
+
+
+def readme_for(adapter: A.GitHubCode, candidate: Candidate) -> Call:
+    return adapter.enrich_calls([candidate])[0]

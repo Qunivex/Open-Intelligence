@@ -117,6 +117,9 @@ class Adapter:
 # --- GitHub ---------------------------------------------------------------------------------------
 
 
+README_MISSING = "README could not be read"
+
+
 class GitHubCode(Adapter):
     source = "github"
     need: Need = "code"
@@ -190,6 +193,16 @@ class GitHubCode(Adapter):
             )
         return calls
 
+    def follow_up_calls(self, candidates: list[Candidate]) -> list[Call]:
+        """A second try for repositories whose README is not called README.md (many Python ones use .rst)."""
+        calls = []
+        for c in candidates:
+            if README_MISSING in c.read_notes and not c.doc_text:
+                owner, _, repo = c.id.partition("/")
+                arguments = {"owner": owner, "repo": repo, "path": "README.rst"}
+                calls.append(Call("get_file_contents", arguments, "readme", targets=[c.id]))
+        return calls
+
     def apply(self, candidates: dict[str, Candidate], call: Call, outcome: CallOutcome) -> None:
         c = candidates.get(call.targets[0])
         if c is None:
@@ -200,8 +213,10 @@ class GitHubCode(Adapter):
                 text = re.sub(r"\A\s*successfully downloaded[^\n]*\n", "", outcome.text, flags=re.IGNORECASE)
                 c.doc_text = text[:DOC_CHARS]
                 c.enriched = True
-            else:
-                c.read_notes.append("README.md could not be read")
+                if README_MISSING in c.read_notes:
+                    c.read_notes.remove(README_MISSING)
+            elif README_MISSING not in c.read_notes:
+                c.read_notes.append(README_MISSING)
         elif call.label == "release":
             data = _json(outcome.text) if outcome.ok else None
             if isinstance(data, dict) and (data.get("tag_name") or data.get("published_at")):

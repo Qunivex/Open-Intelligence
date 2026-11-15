@@ -4,15 +4,19 @@ Lookup order for the file: the ``--config`` argument, then ``$OPEN_INTELLIGENCE_
 ``./open-intelligence.toml``, then ``~/.config/open-intelligence/config.toml``. No file is fine: the
 built-in definitions connect to the three official remote servers.
 
-Tokens are never read from the file. A source names the environment variables that hold its token
-(``token_env``); the file may change those names but cannot contain a token or an Authorization header.
+Tokens are never read from the TOML file. A source names the environment variables that hold its
+token (``token_env``); the file may change those names but cannot contain a token or an
+Authorization header. A token can come from the environment, or from a ``.env`` file (``NAME=value``
+lines) in the working directory or in ``~/.config/open-intelligence/``: a file that is kept out of
+version control by convention, unlike a config file that gets copied and shared.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,8 +46,56 @@ _SECRET_HINTS = ("token", "secret", "password", "api_key", "apikey")
 _SECRET_HEADERS = {"authorization", "cookie", "x-api-key"}
 
 
+# What an access token of the three platforms looks like, to catch one pasted where a name belongs.
+_TOKEN_SHAPE = re.compile(r"^(?:gh[pousr]_|github_pat_|hf_|KGAT)[A-Za-z0-9_]{10,}$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 class ConfigError(ValueError):
     pass
+
+
+def env_file_paths() -> list[Path]:
+    return [Path.cwd() / ".env", Path.home() / ".config" / "open-intelligence" / ".env"]
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """``NAME=value`` lines of a .env file. Comments, blank lines and anything else are ignored."""
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        line = line.strip().removeprefix("export ").strip()
+        name, sep, value = line.partition("=")
+        name = name.strip()
+        if not sep or line.startswith("#") or not _ENV_NAME.match(name):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[name] = value
+    return values
+
+
+def token_environment(
+    sources: Mapping[str, SourceSpec],
+    base: Mapping[str, str] | None = None,
+    paths: Sequence[Path] | None = None,
+) -> dict[str, str]:
+    """The process environment, plus any token the sources name that a .env file provides.
+
+    Only the variables listed in a source's ``token_env`` are taken from the file, and a variable
+    that is already set in the environment wins.
+    """
+    environment = dict(os.environ if base is None else base)
+    wanted = {name for spec in sources.values() for name in spec.token_env}
+    for path in env_file_paths() if paths is None else paths:
+        for name, value in read_env_file(path).items():
+            if name in wanted and value and not environment.get(name):
+                environment[name] = value
+    return environment
 
 
 @dataclass(frozen=True)
@@ -236,7 +288,16 @@ def _apply_overrides(spec: SourceSpec, overrides: dict[str, Any]) -> SourceSpec:
         changes["env"] = {str(k): str(v) for k, v in dict(overrides["env"]).items()}
     if "token_env" in overrides:
         value = overrides["token_env"]
-        changes["token_env"] = (str(value),) if isinstance(value, str) else tuple(str(v) for v in value)
+        names = (str(value),) if isinstance(value, str) else tuple(str(v) for v in value)
+        for name in names:
+            # Never echo the value: it may be a secret.
+            if _TOKEN_SHAPE.match(name) or not _ENV_NAME.match(name):
+                raise ConfigError(
+                    f"{where}: token_env takes the NAME of an environment variable, and one of its entries "
+                    "looks like a token or is not a valid name. Remove it from this file and put the token "
+                    "in the environment or in a .env file as NAME=value."
+                )
+        changes["token_env"] = names
     if "token_required" in overrides:
         changes["token_required"] = bool(overrides["token_required"])
     if "allowed_tools" in overrides:

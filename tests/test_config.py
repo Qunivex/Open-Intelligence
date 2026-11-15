@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from open_intelligence.config import ConfigError, load_settings, settings_from_mapping
+from open_intelligence.config import (
+    ConfigError,
+    load_settings,
+    read_env_file,
+    settings_from_mapping,
+    token_environment,
+)
+from open_intelligence.sources import BUILTIN_SOURCES
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "open-intelligence.example.toml"
 
@@ -101,3 +108,50 @@ def test_ranking_defaults_and_overrides() -> None:
 def test_ranking_config_errors(ranking: dict[str, object]) -> None:
     with pytest.raises(ConfigError):
         settings_from_mapping({"ranking": ranking})
+
+
+# --- tokens ---------------------------------------------------------------------------------------
+
+FAKE_TOKEN = "github_pat_" + "x1Y2" * 12  # shaped like a token; not a real one
+
+
+def test_a_token_pasted_where_a_variable_name_belongs_is_refused_without_echoing_it() -> None:
+    for entries in (["GITHUB_PERSONAL_ACCESS_TOKEN", FAKE_TOKEN], FAKE_TOKEN, ["not a name"]):
+        with pytest.raises(ConfigError) as error:
+            settings_from_mapping({"sources": {"github": {"token_env": entries}}})
+        assert "NAME of an environment variable" in str(error.value)
+        assert FAKE_TOKEN not in str(error.value)
+    renamed = settings_from_mapping({"sources": {"github": {"token_env": ["MY_GH_TOKEN"]}}})
+    assert renamed.sources["github"].token_env == ("MY_GH_TOKEN",)
+
+
+def test_env_file_lines(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text(
+        '# local secrets\n\nGITHUB_PERSONAL_ACCESS_TOKEN=abc123\nexport HF_TOKEN = "quoted value"\n'
+        "KAGGLE_API_TOKEN='single'\nnot a pair\n1BAD=x\nEMPTY=\n",
+        encoding="utf-8",
+    )
+    assert read_env_file(path) == {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "abc123",
+        "HF_TOKEN": "quoted value",
+        "KAGGLE_API_TOKEN": "single",
+        "EMPTY": "",
+    }
+    assert read_env_file(tmp_path / "missing") == {}
+
+
+def test_tokens_come_from_the_environment_first_then_from_a_dotenv_file(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text(
+        "GITHUB_PERSONAL_ACCESS_TOKEN=from-file\nHF_TOKEN=from-file\nAWS_SECRET_ACCESS_KEY=unrelated\n",
+        encoding="utf-8",
+    )
+    environment = token_environment(
+        BUILTIN_SOURCES, base={"HF_TOKEN": "from-env", "PATH": "/bin"}, paths=[path]
+    )
+    assert environment["GITHUB_PERSONAL_ACCESS_TOKEN"] == "from-file"
+    assert environment["HF_TOKEN"] == "from-env"  # what is already set wins
+    assert "AWS_SECRET_ACCESS_KEY" not in environment  # only the tokens the sources name are read
+    assert environment["PATH"] == "/bin"
+    assert token_environment(BUILTIN_SOURCES, base={}, paths=[tmp_path / "missing"]) == {}

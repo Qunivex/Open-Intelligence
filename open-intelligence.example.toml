@@ -4,8 +4,10 @@
 # settings below. Copy this file to ./open-intelligence.toml or ~/.config/open-intelligence/config.toml
 # (or point $OPEN_INTELLIGENCE_CONFIG / --config at it) only to change something.
 #
-# Tokens NEVER go in this file. Each source reads its token from the environment variables named in
-# token_env; this file can only change those names.
+# Tokens NEVER go in this file. token_env lists the NAMES of environment variables; a token pasted
+# there is refused. Put the token itself in the environment, or in a git-ignored .env file next to
+# where you run (or in ~/.config/open-intelligence/.env) as a line like:
+#   GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_...
 
 [gateway]
 timeout_seconds = 45        # per source, per request

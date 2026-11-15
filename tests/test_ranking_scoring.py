@@ -19,6 +19,7 @@ from open_intelligence.ranking.scoring import (
     Scored,
     benchmark_standings,
     benchmark_tables,
+    fold_copies,
     inflation,
     pick_diverse,
     score_group,
@@ -106,7 +107,7 @@ def test_unclear_license_is_penalized_and_flagged_but_not_excluded() -> None:
     scored = score([clear, unclear])
     assert scored["a/unclear"].gate_failures == []
     assert scored["a/clear"].parts["trust"].value == pytest.approx(1.0)
-    assert scored["a/unclear"].parts["trust"].value == pytest.approx(0.3)
+    assert scored["a/unclear"].parts["trust"].value == pytest.approx(0.5)
     assert any("confirm the terms before use" in note for note in scored["a/unclear"].unresolved)
 
 
@@ -508,3 +509,146 @@ def test_matching_only_the_task_category_is_a_weaker_fit_than_matching_a_specifi
         "matches the task category, but none of the specific search phrasings"
         in scored[0].parts["fit"].reasons
     )
+
+
+# --- copies of the same thing ---------------------------------------------------------------------
+
+
+def kaggle_dataset(
+    id: str, title: str, year: int, license: str, notebooks: float, size: int = 175_000
+) -> Candidate:
+    return make(
+        need="dataset",
+        source="kaggle",
+        id=id,
+        title=title,
+        description="customer churn",
+        license=license,
+        license_reported=True,
+        updated_at=datetime(year, 1, 1, tzinfo=UTC),
+        metrics={"notebooks": notebooks, "downloads": notebooks * 200, "votes": notebooks},
+        size_bytes=size,
+        enriched=True,
+    )
+
+
+def test_the_original_dataset_stands_for_its_copies_even_when_a_copy_scores_higher() -> None:
+    original = kaggle_dataset(
+        "first/telco-customer-churn", "Telco Customer Churn", 2018, "Data files © Original Authors", 2995
+    )
+    newer = kaggle_dataset("copy/telco-customer-churn-data", "Telco Customer Churn Data", 2026, "MIT", 18)
+    wider = kaggle_dataset(
+        "copy/telco-customer-churn-11-1-3", "Telco Customer Churn 11.1.3+", 2024, "MIT", 43, size=260_000
+    )
+    other = kaggle_dataset("bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190)
+    scored = score([original, newer, wider, other], phrases=["customer churn"])
+    # The point of the fix: on their own scores the copies win (newer, tidier license label).
+    assert scored["copy/telco-customer-churn-data"].total > scored["first/telco-customer-churn"].total
+
+    leaders = fold_copies(list(scored.values()))
+    assert {s.candidate.id for s in leaders} == {"first/telco-customer-churn", "bank/bank-customer-churn"}
+    telco = next(s for s in leaders if s.candidate.id == "first/telco-customer-churn")
+    assert set(telco.variants) == {"copy/telco-customer-churn-data", "copy/telco-customer-churn-11-1-3"}
+    assert telco.lead == max(scored[i].total for i in scored if "telco" in i)  # read priority of the family
+    assert (
+        telco.total == scored["first/telco-customer-churn"].total
+    )  # its own evidence, until weights are given
+    assert (
+        "the original among 3 copies of the same dataset that were found" in telco.parts["adoption"].reasons
+    )
+    assert any("confirm the terms before use" in note for note in telco.unresolved)
+
+
+def test_a_generic_name_alone_does_not_make_two_datasets_the_same() -> None:
+    one = kaggle_dataset("a/customer-churn", "Customer Churn", 2020, "MIT", 250, size=46_000)
+    two = kaggle_dataset(
+        "b/customer-churn-dataset", "Customer Churn Dataset", 2023, "MIT", 160, size=3_100_000
+    )
+    mirror = kaggle_dataset("c/customer-churn", "Customer Churn", 2024, "MIT", 3, size=46_500)
+    hub = make(
+        need="dataset", id="d/customer_churn", description="customer churn", updated_at=NOW, enriched=True
+    )
+    leaders = fold_copies(list(score([one, two, mirror, hub], phrases=["customer churn"]).values()))
+    by_id = {s.candidate.id: s for s in leaders}
+    # Same name and the same size: a copy. Same name, another size or another platform: not shown to be.
+    assert set(by_id) == {"a/customer-churn", "b/customer-churn-dataset", "d/customer_churn"}
+    assert by_id["a/customer-churn"].variants == ["c/customer-churn"]
+
+
+def test_a_distinctive_name_links_copies_across_platforms() -> None:
+    kaggle = kaggle_dataset("first/telco-customer-churn", "Telco Customer Churn", 2018, "Other", 2995)
+    hub = make(
+        need="dataset",
+        id="group/telco-customer-churn",
+        description="customer churn",
+        created_at=datetime(2024, 6, 1, tzinfo=UTC),
+        metrics={"downloads": 500.0, "likes": 16.0},
+        enriched=True,
+    )
+    (leader,) = fold_copies(list(score([kaggle, hub], phrases=["customer churn"]).values()))
+    assert (
+        leader.candidate.id == "first/telco-customer-churn"
+    )  # equally used on its platform, and there first
+    assert leader.variants == ["huggingface:group/telco-customer-churn"]
+
+
+def test_a_model_stands_for_its_conversions_and_gated_or_unread_members_do_not_represent() -> None:
+    base = make(
+        id="lab/model", description="sentiment", enriched=True, metrics={"downloads": 900.0, "likes": 40.0}
+    )
+    onnx = make(
+        id="other/model-onnx",
+        description="sentiment",
+        base_model="lab/model",
+        lineage="quantized",
+        updated_at=NOW,
+        enriched=True,
+        metrics={"downloads": 50.0, "likes": 2.0},
+    )
+    scored = score([base, onnx], phrases=["sentiment"])
+    (leader,) = fold_copies(list(scored.values()))
+    assert leader.candidate.id == "lab/model"
+    assert leader.variants == ["other/model-onnx"]
+    # Only what was read can represent a family.
+    (leader,) = fold_copies(list(score([base, onnx], phrases=["sentiment"]).values()), prefer={onnx.key})
+    assert leader.candidate.id == "other/model-onnx"
+    # A member that failed a gate is not part of the family at all.
+    gated = score([base, onnx], phrases=["sentiment"])
+    gated["lab/model"].gate_failures.append(("weights", "pickle only"))
+    (leader,) = fold_copies(list(gated.values()))
+    assert leader.candidate.id == "other/model-onnx"
+    assert leader.variants == []
+
+
+def test_a_repository_whose_readme_was_not_read_is_unknown_not_perfect() -> None:
+    released = make(need="code", source="github", id="a/released", has_releases=True)
+    nothing = make(need="code", source="github", id="a/nothing")
+    scored = score([released, nothing])
+    assert scored["a/released"].parts["quality"].value == pytest.approx(
+        0.65
+    )  # releases known, the rest neutral
+    assert scored["a/nothing"].parts["quality"].value is None
+    assert "README was not read" in scored["a/released"].unresolved
+
+
+def test_a_dataset_is_judged_on_the_best_evidence_about_the_data_but_keeps_its_own_license() -> None:
+    original = kaggle_dataset(
+        "first/telco-customer-churn", "Telco Customer Churn", 2018, "Data files © Original Authors", 2995
+    )
+    newer = kaggle_dataset("copy/telco-customer-churn-data", "Telco Customer Churn Data", 2026, "MIT", 18)
+    other = kaggle_dataset("bank/bank-customer-churn", "Bank Customer Churn", 2023, "CC0: Public Domain", 190)
+    scored = score([original, newer, other], phrases=["customer churn"])
+    own_total = scored["first/telco-customer-churn"].total
+    own_trust = scored["first/telco-customer-churn"].parts["trust"].value
+
+    leaders = fold_copies(list(scored.values()), weights=SETTINGS.weights)
+    telco = next(s for s in leaders if s.candidate.id == "first/telco-customer-churn")
+    # Freshness comes from the copy that was kept up; the license stays the original's.
+    assert telco.parts["health"].value == scored["copy/telco-customer-churn-data"].parts["health"].value
+    assert any("(from its copy copy/telco-customer-churn-data)" in r for r in telco.parts["health"].reasons)
+    assert telco.parts["trust"].value == own_trust == pytest.approx(0.5)
+    assert telco.parts["adoption"].value == scored["first/telco-customer-churn"].parts["adoption"].value
+    assert telco.total > own_total
+    # A dataset with no copies is untouched.
+    bank = next(s for s in leaders if s.candidate.id == "bank/bank-customer-churn")
+    assert bank.total == scored["bank/bank-customer-churn"].total

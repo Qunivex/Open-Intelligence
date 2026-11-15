@@ -28,7 +28,9 @@ LICENSE_TRUST: dict[LicenseKind, float] = {
     "copyleft": 0.7,
     "use-restricted": 0.55,
     "non-commercial": 0.45,
-    "unclear": 0.3,
+    # Unknown terms are neither good nor bad: neutral, and flagged on the pick. A harsher value (0.3)
+    # pushed the datasets everyone uses below re-uploads with a tidier label (docs/evaluation.md).
+    "unclear": 0.5,
 }
 
 _PATTERNS: tuple[tuple[LicenseKind, str], ...] = (

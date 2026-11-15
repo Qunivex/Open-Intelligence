@@ -64,7 +64,12 @@ class Recorder:
         concurrency: int = 1,
     ) -> list[CallOutcome]:
         keys = [self._key(source_id, tool, arguments) for tool, arguments in calls]
-        missing = [i for i, key in enumerate(keys) if key not in self.calls]
+        # Live, a remembered failure is asked again: a missing token or an outage is not an answer.
+        missing = [
+            i
+            for i, key in enumerate(keys)
+            if key not in self.calls or (not self.replay_only and not self.calls[key]["ok"])
+        ]
         if missing and not self.replay_only:
             fresh = await self._connector.call_many(
                 source_id, [calls[i] for i in missing], full_text=True, concurrency=concurrency
