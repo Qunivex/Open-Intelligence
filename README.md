@@ -1,20 +1,15 @@
 # Open-Intelligence
 
-An open-source MCP server that helps AI agents find existing open-source work to build on: projects on
-GitHub, models and datasets on Hugging Face, datasets and worked notebooks on Kaggle. It connects to each
-platform's **official** MCP server and routes every request only to the platforms that hold the kind of
-artifact it needs.
+Open-Intelligence is an MCP server for finding existing open-source projects, models, datasets and
+notebooks to build on. It connects to the official MCP servers for GitHub, Hugging Face and Kaggle, then
+routes each request to the sources relevant to the type of resource needed.
 
-Agents tend to build from what they remember from training: packages that may be outdated or vulnerable,
-and no idea that a better maintained project already exists. Open Intelligence makes "check what exists
-today" one tool call.
-
-> **Status: MVP.** Connectors, routing, ranking (the top 3 picks per need) and an evaluation harness work.
-> The evaluation so far, on a small seed set, puts the ranking somewhat ahead of the platforms' own order
-> (nDCG@3 0.66 against 0.56) but behind it on 4 of 10 tasks: it is not yet shown to be better. All three
-> platforms have been run live. See
+> **Status: MVP.** The server supports source connectors, routing, ranking and an evaluation harness. In
+> the current evaluation seed set, the ranking's mean nDCG@3 is 0.66, compared with 0.56 for the best
+> platform order. It wins on 3 of 10 tasks, ties on 3 and loses on 4. These early results do not establish
+> that the ranking is better. All three platforms have been tested live. See
 > [docs/evaluation.md](docs/evaluation.md) for the results and
-> [docs/ranking-parameters.md](docs/ranking-parameters.md) for the parameters, the decisions and the limits.
+> [docs/ranking-parameters.md](docs/ranking-parameters.md) for the ranking design and its limitations.
 
 ## How it works
 
@@ -24,7 +19,7 @@ agent ──MCP──> Open Intelligence ──MCP──> api.githubcopilot.com/
                 │  connector             └─> www.kaggle.com/mcp         (Kaggle)
 ```
 
-The router decides what the request needs, then which platforms serve that need:
+The router identifies the types of resources a request needs and selects the corresponding platforms:
 
 | need | meaning | searched on |
 | --- | --- | --- |
@@ -33,61 +28,58 @@ The router decides what the request needs, then which platforms serve that need:
 | `dataset` | data to train, fine-tune or evaluate on | Hugging Face, Kaggle |
 | `notebook` | worked examples, competition solutions | Kaggle |
 
-"Build a Python project that automates a Snowflake pipeline from Census" needs code only, so only GitHub is
-searched. "Fine-tune a sentiment classifier on our reviews" needs code, a base model and a dataset, so all
-three are. See [docs/architecture.md](docs/architecture.md) for the design.
+"Build a Python project that automates a Snowflake pipeline from Census" needs code, so Open-Intelligence
+searches GitHub. "Fine-tune a sentiment classifier on our reviews" needs code, a base model and a dataset,
+so it searches all three platforms. See [docs/architecture.md](docs/architecture.md) for details.
 
-Then it ranks what it found, per need:
+Results are ranked separately for each resource type:
 
-1. **Gather** candidates with several phrasings, in the platform's order and in one popularity order.
-2. **Gate**: drop what is archived, has a critical known vulnerability, is licensed against your
-   constraints, too old or too large, ships only pickle weights, or does not match the need.
-3. **Score** the rest: fit 40%, evidence of quality 20%, health 15%, trust 15%, adoption 10%. Popularity
-   is a small part, measured against the other candidates and damped when the numbers look inflated.
-4. **Read** the best few and score again:
+1. **Gather** candidates using several query phrasings and both relevance and popularity-based orders.
+2. **Filter** candidates that fail relevant checks, such as incompatible licenses, known critical
+   vulnerabilities, age or size limits, unsafe weight formats, or poor fit.
+3. **Score** the remaining candidates: fit 40%, quality evidence 20%, health 15%, trust 15% and adoption
+   10%. Adoption is measured relative to other candidates and reduced when its signals appear inflated.
+4. **Review** the strongest candidates and refine their scores:
    - repositories: README, latest release, OpenSSF Scorecard, known vulnerabilities in the current release;
-   - models: the card, its eval results (compared with other candidates on the same benchmark), weight files;
-   - datasets: the card, splits and row counts, column names, and a sample of rows.
-5. **Pick** a diverse top 3 and say why: reasons, warnings, and the checks that could not be made.
+   - models: model card, evaluation results on shared benchmarks and weight files;
+   - datasets: dataset card, splits, row counts, columns and a sample of rows.
+5. **Select** up to three diverse candidates per need and report the reasons, warnings and unchecked items.
 
-The security evidence for repositories comes from two public services that are not MCP servers:
-[OpenSSF Scorecard](https://scorecard.dev) and [deps.dev](https://deps.dev). Only a candidate's
-repository and package name are sent to them, and both can be switched off in the config file.
+Repository security evidence comes from two public services that are not MCP servers:
+[OpenSSF Scorecard](https://scorecard.dev) and [deps.dev](https://deps.dev). Only the candidate's
+repository and package names are sent to these services. Both checks can be disabled in the config file.
 
 ## Install
 
-Requires Python 3.11+.
+Requires Python 3.11 or later.
 
 ```bash
 git clone https://github.com/Qunivex/Open-Intelligence.git
-```
-
-```bash
 cd Open-Intelligence && pip install -e .
 ```
 
 ## Tokens
 
-Tokens are read from environment variables, or from a `.env` file, and never from the TOML config or
-from tool calls.
+The server reads tokens from environment variables or a supported `.env` file. Do not put token values in
+the TOML configuration or in tool calls.
 
 | source | variable | needed? |
 | --- | --- | --- |
-| GitHub | `GITHUB_PERSONAL_ACCESS_TOKEN` (or `GITHUB_TOKEN`) | **yes**: GitHub's MCP server needs a token. A fine-grained PAT with read access to public repositories is enough. |
-| Hugging Face | `HF_TOKEN` | no: search works anonymously; a read token raises rate limits |
-| Kaggle | `KAGGLE_API_TOKEN` | for notebook and competition search; dataset and model search work anonymously. Create one under Kaggle Settings > API (it starts with `KGAT`). |
+| GitHub | `GITHUB_PERSONAL_ACCESS_TOKEN` (or `GITHUB_TOKEN`) | Required. A fine-grained token with read access to public repositories is sufficient. |
+| Hugging Face | `HF_TOKEN` | Optional. Search works without a token; a read token can increase rate limits. |
+| Kaggle | `KAGGLE_API_TOKEN` | Required for notebook and competition searches. Dataset and model searches work without a token. Create one under Kaggle Settings > API. |
 
-The simplest setup is a `.env` file (`NAME=value` lines) in the directory you run from, or in
+Create a `.env` file using `NAME=value` lines in the directory where you run the server, or in
 `~/.config/open-intelligence/`:
 
 ```
 GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_...
 ```
 
-`.env` is in `.gitignore`. Do not put a token in `open-intelligence.toml` or the example file: `token_env`
-there takes the *name* of the variable, and a token pasted in its place is refused.
+`.env` is listed in `.gitignore`. Do not put tokens in `open-intelligence.toml` or the example file.
+The `token_env` setting takes an environment-variable name, not a token value.
 
-Check what is connected:
+Check source connectivity with:
 
 ```bash
 open-intelligence sources --check
@@ -95,59 +87,56 @@ open-intelligence sources --check
 
 ## Use it from an MCP client
 
-Claude Code, in a project's `.mcp.json` (the `${...}` values are read from your environment):
+For Claude Code, add this configuration to the project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "open-intelligence": {
       "command": "open-intelligence",
-      "args": ["serve"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
-        "HF_TOKEN": "${HF_TOKEN}",
-        "KAGGLE_API_TOKEN": "${KAGGLE_API_TOKEN}"
-      }
+      "args": ["serve"]
     }
   }
 }
 ```
 
-Any MCP client that can launch a stdio server works the same way: the command is `open-intelligence serve`.
+The server reads credentials from its environment or supported `.env` file; Claude Code does not load
+project `.env` values through `${...}` references. Any MCP client that can launch a stdio server can use
+the command `open-intelligence serve`.
 
 ### Tools
 
-| tool | what it does |
+| Tool | Description |
 | --- | --- |
-| `find_top_picks` | the main tool: route, search, gate, score, and return the top 3 per need with reasons |
-| `route_request` | which sources a request needs and why (offline, instant) |
-| `search_open_source` | route, then search each routed source in parallel; raw, unranked results |
-| `list_sources` | each source's endpoint and auth state; `check=true` also connects |
-| `list_source_tools` | the read-only upstream tools allowed on a source, with live schemas |
-| `call_source_tool` | call one allowed upstream tool, e.g. a README, a model card, dataset details |
+| `find_top_picks` | Routes and searches each need, filters and ranks candidates, and returns up to three results with supporting reasons. |
+| `route_request` | Reports which sources a request needs and why. Works offline. |
+| `search_open_source` | Searches routed sources in parallel and returns unranked results. |
+| `list_sources` | Lists source endpoints and authentication status. Set `check=true` to test connectivity. |
+| `list_source_tools` | Lists the read-only upstream tools available for a source, including their live schemas. |
+| `call_source_tool` | Calls an allowed upstream tool, such as one that retrieves a README, model card or dataset details. |
 
-The server also offers the prompt `open_source_routing` for clients that cannot load skills.
+The server also provides the `open_source_routing` prompt for clients that cannot load skills.
 
-`find_top_picks` takes the task, up to three search phrasings per need (`queries`), what a pick must do
-(`must_have`) and the user's `constraints` (programming language, commercial use, ML library, data
-language, hardware limit). For each need it returns:
+`find_top_picks` accepts a task description, up to three search phrasings per need (`queries`), required
+capabilities (`must_have`) and user constraints such as programming language, commercial use, ML library,
+data language or hardware limits. For each need, it returns:
 
-- `picks`: rank, score and its five parts, `why`, must-haves covered and missing, facts (license, dates,
-  size, eval results, dataset splits and columns, Scorecard and known vulnerabilities), `warnings`,
-  `unresolved_checks`;
-- `benchmark_comparison` (models): the numbers side by side, wherever candidates report the same benchmark;
-- `rejected`: what a gate removed, and why;
-- `platform_top`: what the platform's own order would have shown first, for comparison;
-- `verdict`: `picks`, `no_fit`, `no_candidates`, or `inconclusive` when a source could not be searched.
+- `picks`: rank, score and its five components; reasons; which required capabilities are covered or
+  missing; available facts (license, dates, size, evaluation results, dataset structure and security
+  evidence); warnings; and unchecked items.
+- `benchmark_comparison` for models, where two or more candidates report the same benchmark.
+- `rejected`, with candidates removed by a filter and the reason for each removal.
+- `platform_top`, showing what the platform's own order would have returned first.
+- `verdict`: `picks`, `no_fit`, `no_candidates` or `inconclusive` if a source could not be searched.
 
-The result also lists the assumptions made for constraints that were not given, and
-`questions_for_user`: only the questions whose answer would change the result.
+The result also lists assumptions made about unspecified constraints and includes `questions_for_user`
+only when an answer could change the result.
 
 ### The routing skill
 
-[`open-source-routing`](src/open_intelligence/skills/open-source-routing/SKILL.md) teaches an agent how to
-decide the needs, phrase queries for each platform, and inspect candidates before recommending one.
-To install it for Claude Code:
+The [`open-source-routing` skill](src/open_intelligence/skills/open-source-routing/SKILL.md) guides an
+agent in identifying needs, writing platform-specific queries and reviewing candidates. Install it for
+Claude Code with:
 
 ```bash
 cp -r "$(open-intelligence skill-path)" ~/.claude/skills/
@@ -171,27 +160,26 @@ open-intelligence picks "Find a German NER dataset" --need dataset -q "german ne
 open-intelligence eval
 ```
 
-`route` works offline. `search` (raw results) and `picks` (ranked top 3) call the live servers. `eval`
-scores the ranking against a golden set and against each platform's own order
+`route` works offline. `search` returns raw results and `picks` returns ranked results; both call the live
+servers. `eval` compares the ranking with a golden set and each platform's own order
 ([docs/evaluation.md](docs/evaluation.md)).
 
 ## Configuration (optional)
 
-Without a config file Open Intelligence uses the official remote servers. To change endpoints, run
-GitHub's server locally in Docker, disable a source, switch off the security lookups, or change the
-ranking weights, copy
+Without a config file, Open-Intelligence uses the official remote servers. To change endpoints, run
+GitHub's server locally in Docker, disable a source or security check, or adjust ranking weights, copy
 [`open-intelligence.example.toml`](open-intelligence.example.toml) to `./open-intelligence.toml` or
 `~/.config/open-intelligence/config.toml`.
 
 ## Safety
 
-- Only read-only discovery tools are reachable. Kaggle's upload, download and submit tools, and GitHub's
-  write tools, are refused. GitHub is also connected in read-only mode.
-- Tokens are sent only to their own platform and never appear in results, errors or status.
-- The security lookups send the repository and package names of candidates to `api.scorecard.dev` and
-  `api.deps.dev`, and nothing about your request or project. Set `scorecard = false` and
-  `advisories = false` under `[evidence]` to switch them off.
-- Text in results is written by third parties and is marked `untrusted_content`.
+- Only read-only discovery tools are available. Upload, download and submission tools on Kaggle and
+  write tools on GitHub are blocked; GitHub is also connected in read-only mode.
+- Tokens are sent only to their respective platforms and are not included in results, errors or status.
+- Security lookups send candidate repository and package names to `api.scorecard.dev` and `api.deps.dev`.
+  They do not receive details about your request or project. Disable them with `scorecard = false` and
+  `advisories = false` under `[evidence]`.
+- Third-party text in results is marked as `untrusted_content`.
 
 ## Development
 
@@ -203,24 +191,10 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The default test run is offline: fake upstream MCP servers stand in for the real ones, and the ranking
-tests run against output recorded from the real Hugging Face and Kaggle servers (`tests/fixtures`).
-`pytest -m live` calls the real Hugging Face and Kaggle servers (and GitHub, if a token is set) and checks
-that the parsers still read their formats.
+The default test run is offline. It uses mock upstream MCP servers and fixtures recorded from the real
+Hugging Face and Kaggle servers (`tests/fixtures`). `pytest -m live` calls the live Hugging Face and Kaggle
+servers, and GitHub when a token is set, to check that the parsers handle their responses.
 
-## Roadmap
-
-1. **Connectors and routing**: done.
-2. **Ranking**: done. Gates, use-case fit and evidence-based scoring for a top 3 per need, with OpenSSF
-   Scorecard and known vulnerabilities for repositories, benchmark comparison for models and structure
-   checks for datasets ([parameters and decisions](docs/ranking-parameters.md)).
-3. **Evaluation harness**: done. Golden set format, nDCG@3 and precision@3 against each platform's own
-   order, ablations, record and replay ([first results](docs/evaluation.md)).
-4. **A real golden set**: 30 to 50 tasks per type, graded by practitioners. The one that ships is a seed
-   written by the assistant that built the ranking. Not started.
-5. **What the evaluation says to fix**: re-uploads under other names still outranking the original
-   dataset, the pickle-only gate removing standard models, card-declared evals carrying weight they do not
-   earn, adoption deserving more weight than it has, fit judged by words instead of meaning.
 
 ## License
 

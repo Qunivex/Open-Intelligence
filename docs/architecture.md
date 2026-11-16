@@ -39,7 +39,7 @@ flowchart TD
 
 `search_open_source` remains for exploring: it returns each platform's raw results, unranked.
 
-## The ranking pipeline
+## Ranking pipeline
 
 | stage | what happens | code |
 | --- | --- | --- |
@@ -81,15 +81,15 @@ code. Command: `open-intelligence eval`. Method and results: [evaluation.md](eva
 
 ## Design decisions
 
-- **A gateway, not a pass-through.** The three upstream servers expose about 100 tools together (Kaggle
-  alone 76, including upload, download and submit). Loading all of them makes agents pick wrong tools and
-  costs context. The agent sees six tools; the upstream tools stay reachable through `call_source_tool`,
-  limited to a read-only allowlist.
+- **A gateway, not a pass-through.** The three upstream servers expose about 100 tools in total (Kaggle
+  alone exposes 76, including upload, download and submission tools). Exposing all of them would increase
+  context use and make tool selection less reliable. The agent sees six tools; upstream tools are
+  available through `call_source_tool`, which is limited to a read-only allowlist.
 - **Route by artifact kind.** "Data" in a request does not mean a dataset is needed. The router asks what
   kind of artifact would let the user build on existing work (code, model, dataset, notebook) and maps that
   to the platforms where it lives.
-- **The agent decides, the router checks.** The agent understands the request better than any word list.
-  It passes `needs`; the router's inference is the fallback, and its disagreements come back as
+- **The agent decides, the router checks.** The agent determines the request's needs and passes them in
+  `needs`. The router infers needs only when they are not provided; disagreements are returned as
   `ambiguities`.
 - **Stateless connections.** One short MCP connection per source per request. A source that is down or
   missing a token affects only its own results, and the error says what to fix.
@@ -103,7 +103,8 @@ code. Command: `open-intelligence eval`. Method and results: [evaluation.md](eva
   platform, at a cost: Hugging Face's search and details tools answer in Markdown meant for a model, so
   those parsers can drift. The live tests check them. The exception is security evidence for repositories:
   OpenSSF Scorecard and deps.dev have no MCP server, so they are called over HTTPS, and can be switched off.
-- **A busy upstream is not a verdict.** A rate limit, gateway error or timeout from Hugging Face's dataset
-  viewer is reported as "not checked"; only an answer about the data itself counts against a dataset.
+- **Upstream errors are not evidence about a candidate.** A rate limit, gateway error or timeout from
+  Hugging Face's dataset viewer is reported as "not checked". Only a response about the dataset itself
+  can count against it.
 - **The weights are a hypothesis.** They are configurable, and the first evaluation does not yet show the
   ranking to be better than the platforms' own order.

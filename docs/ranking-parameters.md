@@ -1,15 +1,14 @@
-# Ranking parameters: research notes
+# Ranking parameters
 
-Status: **the pipeline in section 9 and the evaluation in section 10 are built**
-(`src/open_intelligence/ranking/`, `src/open_intelligence/evaluation/`, tool `find_top_picks`). It follows
-the decisions recorded in section 11. The evaluation so far, on a small seed set, shows the ranking
-somewhat ahead of the platforms' own order on average and behind it on half the tasks: see
-[evaluation.md](evaluation.md).
-The weights and thresholds are still a hypothesis. Section 13 lists what is built, what is left out, and
-what running it against the live servers showed.
+The ranking pipeline and evaluation harness are implemented in `src/open_intelligence/ranking/` and
+`src/open_intelligence/evaluation/`, and are available through `find_top_picks`. The pipeline follows the
+decisions in section 11. Initial results are based on a small seed set and do not establish that the
+ranking outperforms the platforms' own ordering; see [evaluation.md](evaluation.md). The weights and
+thresholds remain provisional. Section 13 describes the current implementation, its limitations and
+observations from live platform tests.
 
-This document collects the parameters behind picking the top 3 open-source projects, models and datasets
-for a use case, and how to test whether a ranking is any good.
+This document describes the parameters used to select up to three open-source projects, models and
+datasets for a use case, along with the evaluation approach.
 
 Facts marked *(observed)* were seen on the live official MCP servers on 2026-11-13.
 
@@ -38,7 +37,7 @@ None of these orders knows anything about *your* use case. Each also has a known
   Jurman reverse-engineered its weights and proposed an alternative for biomedical data ([BioData Mining,
   2025](https://doi.org/10.1186/s13040-024-00412-x)).
 
-What this looks like in practice *(observed)*:
+Examples from live searches *(observed)*:
 
 - Hugging Face, models, query `sentiment`, default order: first hit is a transformers.js/ONNX conversion of
   a financial-news sentiment model (4.7K downloads). Right only if the user is in JavaScript and in finance.
@@ -50,7 +49,7 @@ What this looks like in practice *(observed)*:
 
 ## 2. Principles
 
-1. **Fit first.** A candidate that does not do the job is worthless however popular it is.
+1. **Fit first.** A candidate that does not meet the need is unsuitable, regardless of its popularity.
 2. **Gates before scores.** Some facts disqualify (incompatible license, archived, known critical
    vulnerability, unsafe weights). Apply them as filters, not as score penalties that popularity can outweigh.
 3. **Score within a type, never across types.** A repository, a model and a dataset are judged on
@@ -62,8 +61,8 @@ What this looks like in practice *(observed)*:
    domain and size are inputs to ranking, not afterthoughts.
 6. **Unknown is not bad and not good.** Track it explicitly ("no license found", "no eval results") and
    show it to the user.
-7. **A diverse top 3.** Three fine-tunes of the same base model, or three forks of one library, is one
-   option shown three times. Prefer distinct options (for example best fit, lightest, most mature).
+7. **A diverse top 3.** Three fine-tunes of one base model or three forks of one library offer little
+   variety. Prefer distinct options, such as the best fit, the lightest or the most mature.
 8. **Every pick explains itself.** The parameters that put it there, and what was not checked.
 
 ## 3. Parameters shared by all three types
@@ -187,7 +186,7 @@ One query sorted by popularity misses good fits that use different words. Things
 - expansion: from a good base model to its fine-tunes; from a library to the projects that depend on it;
 - de-duplication across sources and of mirrors and conversions.
 
-## 9. A starting point to test, not a decision
+## 9. Initial ranking hypothesis
 
 1. Generate candidates as in section 8.
 2. Apply the type's gates.
@@ -196,15 +195,16 @@ One query sorted by popularity misses good fits that use different words. Things
 4. Pick a diverse top 3 and attach, to each pick, the parameters that put it there and the checks that
    could not be made.
 
-Built as described: see section 13. The weights can be changed under `[ranking]` in the config file.
+The implementation is described in section 13. Weights can be changed under `[ranking]` in the config
+file.
 
 ## 10. How to tell whether a ranking is good
 
-Built, except for the last item: `open-intelligence eval` runs a golden set, scores nDCG@3 and precision@3
-for the ranking and for each platform's own order, and re-runs with each score part removed. The golden
-set that ships is a seed written by the assistant, not by practitioners. How it works, how to run it and
-the first results are in [evaluation.md](evaluation.md). Recording outcomes after a pick is used is not
-built.
+Implemented, except for recording outcomes after a pick is used: `open-intelligence eval` runs a golden
+set, calculates nDCG@3 and precision@3 for the ranking and each platform's own order, and repeats the
+evaluation with each score component removed. The included golden set is an assistant-authored seed, not
+a practitioner-reviewed set. See [evaluation.md](evaluation.md) for the method, instructions and initial
+results.
 
 - **A golden set.** 30 to 50 real tasks per type (repository, model, dataset), each with picks that
   practitioners judged acceptable, good or best.
@@ -217,7 +217,8 @@ built.
 
 ## 11. Decisions on the open questions
 
-Decided by the project owner on 2026-11-13. Each is the first thing to revisit when the evaluation exists.
+The project owner made these decisions on 2026-11-13. Revisit them as more evaluation data becomes
+available.
 
 | question | decision | how it is built |
 | --- | --- | --- |
@@ -359,7 +360,7 @@ had it.
   Duplicates across platforms are caught by name only, so re-uploads of a dataset compete with the original.
 - **Evaluation:** the golden set is a seed, and recording outcomes after a pick is used is not built.
 
-### What the live runs showed (2026-11-13)
+### Live observations (2026-11-13)
 
 - **Several phrasings matter more than any score.** For a German NER dataset, Hugging Face's first three
   results for "german ner" were community datasets with 14 to 62 downloads. With the phrasings "german ner",
@@ -380,7 +381,7 @@ had it.
 - **Hugging Face answers in Markdown written for a model to read.** The parsers for it are the part most
   likely to break; `pytest -m live` checks them against the real server.
 
-### What the live runs showed (2026-11-14, after adding the evidence above)
+### Live observations (2026-11-14)
 
 - **The dataset checks find real problems.** `GermanEval/germeval_14`, the standard German NER benchmark,
   loads through a Python script that the Hub's viewer and current `datasets` versions refuse to run. It is
@@ -402,14 +403,14 @@ had it.
   original dataset, the pickle-only gate removing the standard German NER models, and freshness and
   card-declared evals carrying weight they do not earn. See [evaluation.md](evaluation.md).
 
-### What the live runs showed (2026-11-15, with a GitHub token)
+### Live observations (2026-11-15, with a GitHub token)
 
 - **GitHub works as assumed.** The search, README and release responses matched the parser written from
   GitHub's documentation. For "Python HTTP client" the picks were `urllib3`, `requests` and `aiohttp`, each
   with its OpenSSF Scorecard and "no known vulnerabilities" in the current release; an archived repository
   was filtered out. Two defects showed up and were fixed: a README called `README.rst` was not found, and
   a repository whose README could not be read got full marks for quality.
-- **An unclear license was penalized harder than a restrictive one.** It counted as 0.3, below a license
-  known to forbid commercial use (0.45). It now counts as neutral, 0.5, and is still flagged.
+- **An unclear license was penalized more heavily than a restrictive one.** It counted as 0.3, below a
+  license known to forbid commercial use (0.45). It now counts as neutral (0.5) and is still flagged.
 - **Folding copies helps only as far as names go.** The original churn dataset went from outside the top 3
   to third. A re-upload called `telco-churn-7k` is still first.

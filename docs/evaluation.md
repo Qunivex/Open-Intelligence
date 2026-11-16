@@ -1,13 +1,13 @@
 # Evaluation
 
-Does the ranking put better candidates first than each platform's own order? This page describes how
-that is measured, and what the measurements so far show.
+Does the ranking place stronger candidates ahead of each platform's own ordering? This page explains the
+evaluation method and summarizes the results so far.
 
-**Short version (data of 2026-11-14, seed set, 10 tasks):** the ranking scores somewhat higher on average
-than the platforms' own order (nDCG@3 0.66 against 0.56). It wins 3 tasks, ties 3 and loses 4. That is
-not yet evidence that the ranking is better. The set is small, it was graded by the assistant that built
-the ranking, and several fixes were made after seeing earlier results on these same tasks. Read the
-numbers as a list of what to fix next, not as a score.
+**Summary (data as of 2026-11-14; seed set of 10 tasks):** the ranking's mean nDCG@3 is 0.66, compared
+with 0.56 for the platforms' own ordering. It performs better on 3 tasks, ties on 3 and performs worse on
+4. These results do not establish that the ranking is better: the set is small, it was graded by the
+assistant that developed the ranking, and several changes were made after reviewing earlier results on
+these same tasks. Treat the results as preliminary evidence to guide further work.
 
 ## How it works
 
@@ -20,9 +20,9 @@ numbers as a list of what to fix next, not as a score.
    - **precision@3**: the share of the three slots filled with a good pick (grade 2 or 3).
    - **judged@3**: the share of the top 3 that has a grade at all, so a low score can be told apart from
      an unjudged one.
-3. **The baseline** is what each platform showed first for the first search phrasing, in its own default
-   order. The report uses the better of the platforms for each task, which is generous to the baseline: a
-   user would have to know which platform to look at.
+3. **The baseline** is what each platform returned first for the first search phrasing, using its default
+   order. For each task, the report uses the better result across platforms. This favors the baseline,
+   since a user would need to know which platform to search.
 4. **Ablations** re-run the set with each part of the score switched off in turn, to see which parts
    change the top 3 and in which direction.
 
@@ -51,17 +51,18 @@ runs. A recording of the seed set is several megabytes and is not kept in the re
 
 To change the weights, set them under `[ranking.weights]` in the config file and replay a recording.
 
-## The seed set, and why not to trust it yet
+## Limitations of the seed set
 
 Ten tasks: four models, four datasets, two code.
 
 - The grades were written by the AI assistant that built the ranking, from general knowledge of the
   fields and from what the searches returned. That is a conflict of interest.
-- Ten tasks is far too few to separate a real difference from noise.
+- Ten tasks are insufficient to distinguish a real difference from noise.
 - Six changes to the ranking were made after seeing results on these tasks (see "How the number got
   here"). A result measured on the tasks that prompted the change is optimistic.
 
-The project needs 30 to 50 tasks per type, graded by practitioners who have not seen the ranking's output.
+The evaluation needs 30 to 50 tasks per type, graded by practitioners who have not seen the ranking's
+output.
 
 ## Results
 
@@ -83,7 +84,7 @@ Data as of 2026-11-14. Weights: fit 40%, quality 20%, health 15%, trust 15%, ado
 
 Mean precision@3 of the best platform order: 0.53.
 
-### Where it wins
+### Tasks where the ranking performs better
 
 - **Sentence embeddings (1.00 against 0.30).** Searching by name returns models with "sentence" in their
   name; the standard ones (`all-MiniLM-L6-v2`, `nomic-embed-text-v1.5`, `bge-base-en-v1.5`) have no such
@@ -93,7 +94,7 @@ Mean precision@3 of the best platform order: 0.53.
 - **English sentiment model (0.40 against 0.16).** Both are weak; the platforms lead with a
   financial-news model and its conversion.
 
-### Where it ties
+### Tasks with a tie
 
 - **Movie review dataset (0.51 each).** `stanfordnlp/imdb` is first in both. The ranking's other two picks
   are a small community dataset and a film metadata table: word matching cannot tell "movie reviews" from
@@ -101,13 +102,13 @@ Mean precision@3 of the best platform order: 0.53.
 - **Python data validation (0.67 each).** `pydantic` is first in both; neither fills the other two slots
   with a graded candidate.
 
-- **Customer churn dataset (1.00 each).** This was the biggest loss (0.40 against 1.00). Copies of a
-  dataset are now recognized by their content (the same column names, the same file size, or the same
-  width with a related name) and fold under the original, so `blastchar/telco-customer-churn` leads
-  14 uploads of the same data instead of competing with them. It is first by a narrow margin over the
-  classic bank churn file, which leads 11 uploads of its own.
+- **Customer churn dataset (1.00 each).** This task initially showed the largest gap (0.40 against 1.00).
+  Copies are now identified by content (matching column names, file size, or width with a related name)
+  and grouped under the original. As a result, `blastchar/telco-customer-churn` is ranked ahead of
+  14 uploads of the same data rather than competing with them. It leads by a narrow margin over the
+  classic bank churn file, which has 11 uploads of its own.
 
-### Where it loses
+### Tasks where the ranking performs worse
 
 - **English speech recognition (0.60 against 0.87).** The Hub leads with `whisper-large-v3` and its turbo
   version. The ranking puts `whisper-small` and `whisper-base` ahead of them: the small models publish
@@ -135,7 +136,7 @@ Quality (20%), health (15%) and trust (15%) change almost nothing.
 
 ## How the number got here
 
-The number above is the sixth measurement, not the first. In order:
+The results above are from the sixth measurement. The sequence of changes was:
 
 | run | tasks | change | ranking nDCG@3 | best platform order |
 | --- | ---: | --- | ---: | ---: |
@@ -159,8 +160,9 @@ dataset ten points against re-uploads with a tidier label. Three sizes were meas
 | 0.5 | 0.62 | 0.62 |
 | 0.7 | 0.65 | 0.76 |
 
-0.5 was chosen because it is what "unknown is neither good nor bad" means, not because it scored best:
-0.7 scored higher, but would rank an unclear license above one known to restrict use.
+0.5 was chosen to represent the principle that unknown evidence is neither positive nor negative, not
+because it produced the highest score. A value of 0.7 scored higher but would rank an unclear license
+above one known to restrict use.
 
 Earlier, before runs 4 and 5, three other weightings were tried that moved weight from health to adoption.
 All landed within 0.01 of the default.
