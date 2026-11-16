@@ -1,0 +1,265 @@
+{
+ "https://api.scorecard.dev/projects/github.com/pallets/flask": [
+  200,
+  {
+   "date": "2026-11-09",
+   "score": 7.1,
+   "checks": [
+    {
+     "name": "Maintained",
+     "score": 10
+    },
+    {
+     "name": "Code-Review",
+     "score": 0
+    },
+    {
+     "name": "Dangerous-Workflow",
+     "score": 10
+    },
+    {
+     "name": "Token-Permissions",
+     "score": 10
+    },
+    {
+     "name": "Binary-Artifacts",
+     "score": 10
+    },
+    {
+     "name": "Pinned-Dependencies",
+     "score": 8
+    },
+    {
+     "name": "CII-Best-Practices",
+     "score": 0
+    },
+    {
+     "name": "License",
+     "score": 10
+    },
+    {
+     "name": "Fuzzing",
+     "score": 10
+    },
+    {
+     "name": "Packaging",
+     "score": 10
+    },
+    {
+     "name": "Signed-Releases",
+     "score": 6
+    },
+    {
+     "name": "Branch-Protection",
+     "score": 3
+    },
+    {
+     "name": "Security-Policy",
+     "score": 9
+    },
+    {
+     "name": "SAST",
+     "score": 0
+    }
+   ]
+  }
+ ],
+ "https://api.deps.dev/v3/systems/pypi/packages/flask": [
+  200,
+  {
+   "packageKey": {
+    "system": "PYPI",
+    "name": "flask"
+   },
+   "versions": [
+    {
+     "versionKey": {
+      "system": "PYPI",
+      "name": "flask",
+      "version": "2.2.2"
+     },
+     "publishedAt": "2022-08-08T23:26:30Z",
+     "isDefault": false,
+     "isDeprecated": false,
+     "deprecatedReason": ""
+    },
+    {
+     "versionKey": {
+      "system": "PYPI",
+      "name": "flask",
+      "version": "3.1.3"
+     },
+     "publishedAt": "2026-02-19T05:00:56Z",
+     "isDefault": true,
+     "isDeprecated": false,
+     "deprecatedReason": ""
+    }
+   ]
+  }
+ ],
+ "https://api.deps.dev/v3/systems/pypi/packages/flask/versions/3.1.3": [
+  200,
+  {
+   "versionKey": {
+    "system": "PYPI",
+    "name": "flask",
+    "version": "3.1.3"
+   },
+   "isDefault": true,
+   "advisoryKeys": [],
+   "links": [
+    {
+     "label": "DOCUMENTATION",
+     "url": "https://flask.palletsprojects.com/"
+    },
+    {
+     "label": "SOURCE_REPO",
+     "url": "https://github.com/pallets/flask"
+    },
+    {
+     "label": "ATTESTATION",
+     "url": "https://pypi.org/integrity/flask/3.1.3/flask-3.1.3-py3-none-any.whl/provenance"
+    }
+   ],
+   "relatedProjects": [
+    {
+     "projectKey": {
+      "id": "github.com/pallets/flask"
+     },
+     "relationProvenance": "UNVERIFIED_METADATA",
+     "relationType": "SOURCE_REPO"
+    },
+    {
+     "projectKey": {
+      "id": "github.com/pallets/flask"
+     },
+     "relationProvenance": "PYPI_PUBLISH_ATTESTATION",
+     "relationType": "SOURCE_REPO"
+    }
+   ]
+  }
+ ],
+ "https://api.deps.dev/v3/systems/pypi/packages/flask/versions/2.2.2": [
+  200,
+  {
+   "versionKey": {
+    "system": "PYPI",
+    "name": "flask",
+    "version": "2.2.2"
+   },
+   "isDefault": false,
+   "advisoryKeys": [
+    {
+     "id": "GHSA-68rp-wp8r-4726"
+    },
+    {
+     "id": "GHSA-m2qf-hxjv-5gpq"
+    },
+    {
+     "id": "PYSEC-2023-62"
+    },
+    {
+     "id": "PYSEC-2026-2151"
+    }
+   ],
+   "links": [
+    {
+     "label": "DOCUMENTATION",
+     "url": "https://flask.palletsprojects.com/"
+    },
+    {
+     "label": "ISSUE_TRACKER",
+     "url": "https://github.com/pallets/flask/issues/"
+    },
+    {
+     "label": "SOURCE_REPO",
+     "url": "https://github.com/pallets/flask"
+    }
+   ],
+   "relatedProjects": [
+    {
+     "projectKey": {
+      "id": "github.com/pallets/flask"
+     },
+     "relationProvenance": "UNVERIFIED_METADATA",
+     "relationType": "ISSUE_TRACKER"
+    },
+    {
+     "projectKey": {
+      "id": "github.com/pallets/flask"
+     },
+     "relationProvenance": "UNVERIFIED_METADATA",
+     "relationType": "SOURCE_REPO"
+    }
+   ]
+  }
+ ],
+ "https://api.deps.dev/v3/advisories/GHSA-68rp-wp8r-4726": [
+  200,
+  {
+   "advisoryKey": {
+    "id": "GHSA-68rp-wp8r-4726"
+   },
+   "url": "https://osv.dev/vulnerability/GHSA-68rp-wp8r-4726",
+   "title": "Flask session does not add `Vary: Cookie` header when accessed in some ways",
+   "aliases": [
+    "CVE-2026-27205",
+    "PYSEC-2026-2151"
+   ],
+   "cvss3Score": 0,
+   "cvss3Vector": ""
+  }
+ ],
+ "https://api.deps.dev/v3/advisories/GHSA-m2qf-hxjv-5gpq": [
+  200,
+  {
+   "advisoryKey": {
+    "id": "GHSA-m2qf-hxjv-5gpq"
+   },
+   "url": "https://osv.dev/vulnerability/GHSA-m2qf-hxjv-5gpq",
+   "title": "Flask vulnerable to possible disclosure of permanent session cookie due to missing Vary: Cookie header",
+   "aliases": [
+    "CVE-2023-30861",
+    "PYSEC-2023-62"
+   ],
+   "cvss3Score": 7.5,
+   "cvss3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+  }
+ ],
+ "https://api.deps.dev/v3/advisories/PYSEC-2023-62": [
+  200,
+  {
+   "advisoryKey": {
+    "id": "PYSEC-2023-62"
+   },
+   "url": "https://osv.dev/vulnerability/PYSEC-2023-62",
+   "title": "PYSEC-2023-62",
+   "aliases": [
+    "CVE-2023-30861",
+    "GHSA-m2qf-hxjv-5gpq"
+   ],
+   "cvss3Score": 0,
+   "cvss3Vector": ""
+  }
+ ],
+ "https://api.deps.dev/v3/advisories/PYSEC-2026-2151": [
+  200,
+  {
+   "advisoryKey": {
+    "id": "PYSEC-2026-2151"
+   },
+   "url": "https://osv.dev/vulnerability/PYSEC-2026-2151",
+   "title": "PYSEC-2026-2151",
+   "aliases": [
+    "CVE-2026-27205",
+    "GHSA-68rp-wp8r-4726"
+   ],
+   "cvss3Score": 4.3,
+   "cvss3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N"
+  }
+ ],
+ "https://api.scorecard.dev/projects/github.com/this-org-does-not-exist-xyz/nope": [
+  404,
+  null
+ ]
+}

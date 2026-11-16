@@ -1,0 +1,163 @@
+{
+ "blastchar/telco-customer-churn": {
+  "file_summary_info": {
+   "total_file_count": "1",
+   "file_types": [
+    {
+     "extension": ".csv",
+     "file_count": "1",
+     "total_size": "977501"
+    }
+   ]
+  },
+  "column_summary_info": {
+   "total_column_count": "21",
+   "column_types": [
+    {
+     "column_type": "String",
+     "column_count": "12"
+    },
+    {
+     "column_type": "Boolean",
+     "column_count": "5"
+    },
+    {
+     "column_type": "Integer",
+     "column_count": "2"
+    },
+    {
+     "column_type": "Decimal",
+     "column_count": "2"
+    }
+   ]
+  }
+ },
+ "barun2104/telecom-churn": {
+  "file_summary_info": {
+   "total_file_count": "1",
+   "file_types": [
+    {
+     "extension": ".csv",
+     "file_count": "1",
+     "total_size": "128828"
+    }
+   ]
+  },
+  "column_summary_info": {
+   "total_column_count": "11",
+   "column_types": [
+    {
+     "column_type": "Integer",
+     "column_count": "6"
+    },
+    {
+     "column_type": "Decimal",
+     "column_count": "5"
+    }
+   ]
+  }
+ },
+ "radheshyamkollipara/bank-customer-churn": {
+  "file_summary_info": {
+   "total_file_count": "1",
+   "file_types": [
+    {
+     "extension": ".csv",
+     "file_count": "1",
+     "total_size": "837415"
+    }
+   ]
+  },
+  "column_summary_info": {
+   "total_column_count": "18",
+   "column_types": [
+    {
+     "column_type": "Integer",
+     "column_count": "11"
+    },
+    {
+     "column_type": "String",
+     "column_count": "3"
+    },
+    {
+     "column_type": "Decimal",
+     "column_count": "2"
+    },
+    {
+     "column_type": "Id",
+     "column_count": "1"
+    },
+    {
+     "column_type": "Country",
+     "column_count": "1"
+    }
+   ]
+  }
+ },
+ "muhammadshahidazeem/customer-churn-dataset": {
+  "file_summary_info": {
+   "total_file_count": "2",
+   "file_types": [
+    {
+     "extension": ".csv",
+     "file_count": "2",
+     "total_size": "26730974"
+    }
+   ]
+  },
+  "column_summary_info": {
+   "total_column_count": "24",
+   "column_types": [
+    {
+     "column_type": "Integer",
+     "column_count": "16"
+    },
+    {
+     "column_type": "String",
+     "column_count": "6"
+    },
+    {
+     "column_type": "Id",
+     "column_count": "2"
+    }
+   ]
+  }
+ },
+ "gauravtopre/bank-customer-churn-dataset": {
+  "file_summary_info": {
+   "total_file_count": "1",
+   "file_types": [
+    {
+     "extension": ".csv",
+     "file_count": "1",
+     "total_size": "561600"
+    }
+   ]
+  },
+  "column_summary_info": {
+   "total_column_count": "12",
+   "column_types": [
+    {
+     "column_type": "Integer",
+     "column_count": "7"
+    },
+    {
+     "column_type": "Decimal",
+     "column_count": "2"
+    },
+    {
+     "column_type": "String",
+     "column_count": "1"
+    },
+    {
+     "column_type": "Country",
+     "column_count": "1"
+    },
+    {
+     "column_type": "Id",
+     "column_count": "1"
+    }
+   ]
+  }
+ }
+}
